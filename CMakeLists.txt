@@ -61,10 +61,17 @@ target_compile_features(${PROJECT_NAME}_node PUBLIC cxx_std_17)
 target_link_libraries(${PROJECT_NAME}_node
   ${PROJECT_NAME}_core
 )
-rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
-target_link_libraries(${PROJECT_NAME}_node
-  ${cpp_typesupport_target}
-)
+if(COMMAND rosidl_get_typesupport_target)
+  rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
+  target_link_libraries(${PROJECT_NAME}_node
+    ${cpp_typesupport_target}
+  )
+else()
+  # ROS 2 Foxy exposes the generated service types through the legacy helper.
+  rosidl_target_interfaces(${PROJECT_NAME}_node
+    ${PROJECT_NAME} "rosidl_typesupport_cpp"
+  )
+endif()
 ament_target_dependencies(${PROJECT_NAME}_node
   action_msgs
   geometry_msgs
@@ -94,9 +101,15 @@ add_executable(frontier_exploration_ctl
   src/frontier_exploration_ctl.cpp
 )
 target_compile_features(frontier_exploration_ctl PUBLIC cxx_std_17)
-target_link_libraries(frontier_exploration_ctl
-  ${cpp_typesupport_target}
-)
+if(COMMAND rosidl_get_typesupport_target)
+  target_link_libraries(frontier_exploration_ctl
+    ${cpp_typesupport_target}
+  )
+else()
+  rosidl_target_interfaces(frontier_exploration_ctl
+    ${PROJECT_NAME} "rosidl_typesupport_cpp"
+  )
+endif()
 ament_target_dependencies(frontier_exploration_ctl
   rclcpp
 )
@@ -263,8 +276,16 @@ if(BUILD_TESTING)
   target_link_libraries(test_control_service_and_idle
     ${PROJECT_NAME}_core
     ${PROJECT_NAME}_node
-    ${cpp_typesupport_target}
   )
+  if(COMMAND rosidl_get_typesupport_target)
+    target_link_libraries(test_control_service_and_idle
+      ${cpp_typesupport_target}
+    )
+  else()
+    rosidl_target_interfaces(test_control_service_and_idle
+      ${PROJECT_NAME} "rosidl_typesupport_cpp"
+    )
+  endif()
   target_include_directories(test_control_service_and_idle PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
