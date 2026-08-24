@@ -69,6 +69,14 @@ public:
   bool global_cost_blocked(int map_x, int map_y);
   // Returns whether the aligned or transformed local costmap cell is blocked.
   bool local_cost_blocked(int map_x, int map_y);
+  // Marks a known-free cell as connected to the robot through known-free space.
+  bool mark_reachable_free_cell(int map_x, int map_y);
+  // Returns whether a cell belongs to the robot's reachable known-free component.
+  bool reachable_free_cell(int map_x, int map_y) const;
+  // Reports whether reachable-component filtering is active for this pass.
+  bool reachable_free_filter_active() const;
+  // Enables reachable-component filtering after the component has been built.
+  void finish_reachable_free_scan();
   // Starts a new dedup scope for candidate accessibility marking.
   void begin_candidate_accessible_scan();
   // Returns true only on the first mark in the current dedup scope.
@@ -119,6 +127,8 @@ private:
 
   std::vector<uint32_t> visible_frontier_cell_stamp_;
   uint32_t visible_frontier_cell_generation_{1};
+  std::vector<uint8_t> reachable_free_cells_;
+  bool reachable_free_scan_ready_{false};
   FrontierSearchOptions search_options_;
 
   // Frontier eligibility helper needs direct access to stamp/cache internals.

@@ -128,6 +128,7 @@ FrontierSearchContext::FrontierSearchContext(
   frontier_eligibility_cache_stamp_.assign(cell_count, 0);
   accessible_cell_stamp_.assign(cell_count, 0);
   visible_frontier_cell_stamp_.assign(cell_count, 0);
+  reachable_free_cells_.assign(cell_count, 0);
 }
 
 std::size_t FrontierSearchContext::cell_index(int map_x, int map_y) const
@@ -219,6 +220,31 @@ bool FrontierSearchContext::local_cost_blocked(int map_x, int map_y)
   local_cost_blocked_cache_stamp_[idx] = local_cost_blocked_generation_;
   local_cost_blocked_cache_[idx] = blocked ? 1 : 0;
   return blocked;
+}
+
+bool FrontierSearchContext::mark_reachable_free_cell(int map_x, int map_y)
+{
+  const std::size_t idx = cell_index(map_x, map_y);
+  if (reachable_free_cells_[idx] != 0) {
+    return false;
+  }
+  reachable_free_cells_[idx] = 1;
+  return true;
+}
+
+bool FrontierSearchContext::reachable_free_cell(int map_x, int map_y) const
+{
+  return reachable_free_cells_[cell_index(map_x, map_y)] != 0;
+}
+
+bool FrontierSearchContext::reachable_free_filter_active() const
+{
+  return reachable_free_scan_ready_;
+}
+
+void FrontierSearchContext::finish_reachable_free_scan()
+{
+  reachable_free_scan_ready_ = true;
 }
 
 bool FrontierSearchContext::is_cost_blocked(
@@ -484,6 +510,14 @@ std::optional<FrontierCandidate> build_frontier_candidate(
       }
 
       if (
+        context->reachable_free_filter_active() &&
+        !context->reachable_free_cell(neighbor->mapX, neighbor->mapY))
+      {
+        // A free-looking endpoint on a disconnected map island is not navigable.
+        return;
+      }
+
+      if (
         context->global_cost_blocked(neighbor->mapX, neighbor->mapY))
       {
         // A blocked neighbor cannot be used as frontier goal candidate.
@@ -587,6 +621,31 @@ FrontierSearchResult get_frontier(
   const auto [mx, my] = occupancy_map.worldToMap(current_pose.position.x, current_pose.position.y);
   // If robot projects into unknown space, find_free_with_cache nudges start to the closest free seed.
   const auto free_point = find_free_with_cache(mx, my, occupancy_map, frontier_cache);
+  std::deque<std::pair<int, int>> reachable_queue;
+  search_context.mark_reachable_free_cell(free_point.first, free_point.second);
+  reachable_queue.push_back(free_point);
+  while (!reachable_queue.empty()) {
+    const auto [reachable_x, reachable_y] = reachable_queue.front();
+    reachable_queue.pop_front();
+    FrontierPoint * reachable_point = frontier_cache.getPoint(reachable_x, reachable_y);
+    for_each_neighbor(
+      reachable_point,
+      occupancy_map,
+      frontier_cache,
+      [&](FrontierPoint * neighbor) {
+        if (
+          occupancy_map.getCost(neighbor->mapX, neighbor->mapY) !=
+          static_cast<int>(OccupancyGrid2d::CostValues::FreeSpace) ||
+          search_context.global_cost_blocked(neighbor->mapX, neighbor->mapY) ||
+          !search_context.mark_reachable_free_cell(neighbor->mapX, neighbor->mapY))
+        {
+          return;
+        }
+        reachable_queue.emplace_back(neighbor->mapX, neighbor->mapY);
+      });
+  }
+  search_context.finish_reachable_free_scan();
+
   FrontierPoint * start = frontier_cache.getPoint(free_point.first, free_point.second);
   // Seed map BFS from a guaranteed free (or best effort) cell.
   start->classification = classification_flag(PointClassification::MapOpen);
@@ -687,32 +746,37 @@ FrontierSearchResult get_frontier(
       }
     }
 
-    // Continue map-space BFS through cells adjacent to free space.
-    for_each_neighbor(point, occupancy_map, frontier_cache, [&](FrontierPoint * neighbor) {
-      if (
-        !has_classification(neighbor, PointClassification::MapOpen) &&
-        !has_classification(neighbor, PointClassification::MapClosed))
-      {
-        bool has_free_neighbor = false;
-        for_each_neighbor(neighbor, occupancy_map, frontier_cache, [&](FrontierPoint * candidate) {
-          if (
-            occupancy_map.getCost(candidate->mapX, candidate->mapY) ==
-            static_cast<int>(OccupancyGrid2d::CostValues::FreeSpace))
-          {
-            has_free_neighbor = true;
-          }
-        });
-
-        if (has_free_neighbor) {
-          if (point->robot_distance_m >= 0.0) {
-            neighbor->robot_distance_m = point->robot_distance_m + resolution_m;
-          }
-          // MapOpen marks node eligible for future map-queue expansion.
-          set_classification(neighbor, PointClassification::MapOpen);
-          map_point_queue.push_back(neighbor);
+    // Expand only from the robot-connected free component. Unknown frontier
+    // cells may be inspected once, but can never bridge into a disconnected
+    // free island on the other side of unknown space.
+    if (search_context.reachable_free_cell(point->mapX, point->mapY)) {
+      for_each_neighbor(point, occupancy_map, frontier_cache, [&](FrontierPoint * neighbor) {
+        if (
+          has_classification(neighbor, PointClassification::MapOpen) ||
+          has_classification(neighbor, PointClassification::MapClosed))
+        {
+          return;
         }
-      }
-    });
+
+        const bool reachable_free =
+          search_context.reachable_free_cell(neighbor->mapX, neighbor->mapY);
+        const bool reachable_frontier = is_frontier_point(
+          neighbor,
+          occupancy_map,
+          costmap,
+          local_costmap,
+          frontier_cache,
+          &search_context);
+        if (!reachable_free && !reachable_frontier) {
+          return;
+        }
+        if (point->robot_distance_m >= 0.0) {
+          neighbor->robot_distance_m = point->robot_distance_m + resolution_m;
+        }
+        set_classification(neighbor, PointClassification::MapOpen);
+        map_point_queue.push_back(neighbor);
+      });
+    }
 
     // MapClosed marks map-queue completion for this point.
     set_classification(point, PointClassification::MapClosed);
@@ -784,7 +848,11 @@ bool is_frontier_point(
       return;
     }
 
-    if (map_cost == static_cast<int>(OccupancyGrid2d::CostValues::FreeSpace)) {
+    if (
+      map_cost == static_cast<int>(OccupancyGrid2d::CostValues::FreeSpace) &&
+      (!context->reachable_free_filter_active() ||
+      context->reachable_free_cell(neighbor->mapX, neighbor->mapY)))
+    {
       has_free_neighbor = true;
     }
   });

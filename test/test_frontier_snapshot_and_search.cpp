@@ -240,6 +240,35 @@ TEST(FrontierSearchTests, FrontierChoiceDeterministicAcrossIdenticalRuns)
   }
 }
 
+TEST(FrontierSearchTests, DisconnectedFreeIslandIsNotSelected)
+{
+  auto map_msg = build_grid(16, 10, -1);
+  std::vector<std::pair<int, int>> connected_free;
+  for (int x = 1; x <= 4; ++x) {
+    for (int y = 2; y <= 7; ++y) {
+      connected_free.emplace_back(x, y);
+    }
+  }
+  std::vector<std::pair<int, int>> disconnected_free;
+  for (int x = 10; x <= 14; ++x) {
+    for (int y = 1; y <= 8; ++y) {
+      disconnected_free.emplace_back(x, y);
+    }
+  }
+  set_cells(map_msg, connected_free, 0);
+  set_cells(map_msg, disconnected_free, 0);
+  const OccupancyGrid2d occupancy_map(map_msg);
+  const OccupancyGrid2d costmap(build_grid(16, 10, 0));
+
+  const auto result = get_frontier(make_pose(2.5, 4.5), occupancy_map, costmap);
+
+  ASSERT_FALSE(result.frontiers.empty());
+  for (const auto & frontier : result.frontiers) {
+    ASSERT_TRUE(frontier.goal_point.has_value());
+    EXPECT_LT(frontier.goal_point->first, 5.0);
+  }
+}
+
 TEST(FrontierSearchTests, ConcurrentSearchProducesDeterministicEquivalentResults)
 {
   std::vector<std::pair<int, int>> free_cells;
