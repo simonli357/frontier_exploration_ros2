@@ -30,9 +30,11 @@ limitations under the License.
 #include <chrono>
 #include <cstddef>
 #include <cmath>
+#include <future>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 #include <visualization_msgs/msg/marker.hpp>
@@ -1279,9 +1281,19 @@ void FrontierExplorerNode::dispatchGoalRequest(const GoalDispatchRequest & reque
   goal_request.pose = request.goal_pose;
 
   rclcpp_action::Client<NavigateToPose>::SendGoalOptions options;
-  options.goal_response_callback = [this, dispatch_id = request.dispatch_id](
-    std::shared_ptr<NavigateGoalHandle> goal_handle)
+  options.goal_response_callback = [this, dispatch_id = request.dispatch_id](auto response)
     {
+      using Response = std::decay_t<decltype(response)>;
+      std::shared_ptr<NavigateGoalHandle> goal_handle;
+      if constexpr (std::is_same_v<
+          Response,
+          std::shared_future<std::shared_ptr<NavigateGoalHandle>>>)
+      {
+        goal_handle = response.get();
+      } else {
+        goal_handle = response;
+      }
+
       std::shared_ptr<GoalHandleInterface> wrapped_handle;
       bool accepted = static_cast<bool>(goal_handle);
       if (accepted) {
