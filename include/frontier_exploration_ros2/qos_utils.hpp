@@ -28,6 +28,9 @@ limitations under the License.
 namespace frontier_exploration_ros2
 {
 
+using ReliabilityPolicy = rmw_qos_reliability_policy_t;
+using DurabilityPolicy = rmw_qos_durability_policy_t;
+
 // Normalizes user-provided QoS tokens for case-insensitive parsing.
 [[nodiscard]] inline std::string normalize_qos_token(std::string value)
 {
@@ -40,14 +43,14 @@ namespace frontier_exploration_ros2
 }
 
 // Converts reliability enum to stable config/log token.
-[[nodiscard]] inline std::string reliability_policy_to_string(rclcpp::ReliabilityPolicy policy)
+[[nodiscard]] inline std::string reliability_policy_to_string(ReliabilityPolicy policy)
 {
   switch (policy) {
-    case rclcpp::ReliabilityPolicy::Reliable:
+    case RMW_QOS_POLICY_RELIABILITY_RELIABLE:
       return "reliable";
-    case rclcpp::ReliabilityPolicy::BestEffort:
+    case RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT:
       return "best_effort";
-    case rclcpp::ReliabilityPolicy::SystemDefault:
+    case RMW_QOS_POLICY_RELIABILITY_SYSTEM_DEFAULT:
       return "system_default";
     default:
       return "unknown";
@@ -55,14 +58,14 @@ namespace frontier_exploration_ros2
 }
 
 // Converts durability enum to stable config/log token.
-[[nodiscard]] inline std::string durability_policy_to_string(rclcpp::DurabilityPolicy policy)
+[[nodiscard]] inline std::string durability_policy_to_string(DurabilityPolicy policy)
 {
   switch (policy) {
-    case rclcpp::DurabilityPolicy::TransientLocal:
+    case RMW_QOS_POLICY_DURABILITY_TRANSIENT_LOCAL:
       return "transient_local";
-    case rclcpp::DurabilityPolicy::Volatile:
+    case RMW_QOS_POLICY_DURABILITY_VOLATILE:
       return "volatile";
-    case rclcpp::DurabilityPolicy::SystemDefault:
+    case RMW_QOS_POLICY_DURABILITY_SYSTEM_DEFAULT:
       return "system_default";
     default:
       return "unknown";
@@ -70,19 +73,19 @@ namespace frontier_exploration_ros2
 }
 
 // Parses reliability policy parameter and validates allowed values.
-[[nodiscard]] inline rclcpp::ReliabilityPolicy parse_reliability_policy(
+[[nodiscard]] inline ReliabilityPolicy parse_reliability_policy(
   const std::string & value,
   const std::string & parameter_name)
 {
   const std::string normalized = normalize_qos_token(value);
   if (normalized == "reliable") {
-    return rclcpp::ReliabilityPolicy::Reliable;
+    return RMW_QOS_POLICY_RELIABILITY_RELIABLE;
   }
   if (normalized == "best_effort") {
-    return rclcpp::ReliabilityPolicy::BestEffort;
+    return RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT;
   }
   if (normalized == "system_default") {
-    return rclcpp::ReliabilityPolicy::SystemDefault;
+    return RMW_QOS_POLICY_RELIABILITY_SYSTEM_DEFAULT;
   }
   throw std::invalid_argument(
           "Invalid value for '" + parameter_name +
@@ -90,19 +93,19 @@ namespace frontier_exploration_ros2
 }
 
 // Parses durability policy parameter and validates allowed values.
-[[nodiscard]] inline rclcpp::DurabilityPolicy parse_durability_policy(
+[[nodiscard]] inline DurabilityPolicy parse_durability_policy(
   const std::string & value,
   const std::string & parameter_name)
 {
   const std::string normalized = normalize_qos_token(value);
   if (normalized == "transient_local") {
-    return rclcpp::DurabilityPolicy::TransientLocal;
+    return RMW_QOS_POLICY_DURABILITY_TRANSIENT_LOCAL;
   }
   if (normalized == "volatile") {
-    return rclcpp::DurabilityPolicy::Volatile;
+    return RMW_QOS_POLICY_DURABILITY_VOLATILE;
   }
   if (normalized == "system_default") {
-    return rclcpp::DurabilityPolicy::SystemDefault;
+    return RMW_QOS_POLICY_DURABILITY_SYSTEM_DEFAULT;
   }
   throw std::invalid_argument(
           "Invalid value for '" + parameter_name +
@@ -125,19 +128,19 @@ namespace frontier_exploration_ros2
 // Resolved QoS policies applied by frontier explorer subscriptions.
 struct TopicQosProfiles
 {
-  rclcpp::DurabilityPolicy map_durability{rclcpp::DurabilityPolicy::TransientLocal};
-  rclcpp::ReliabilityPolicy map_reliability{rclcpp::ReliabilityPolicy::Reliable};
+  DurabilityPolicy map_durability{RMW_QOS_POLICY_DURABILITY_TRANSIENT_LOCAL};
+  ReliabilityPolicy map_reliability{RMW_QOS_POLICY_RELIABILITY_RELIABLE};
   std::size_t map_depth{1};
-  rclcpp::ReliabilityPolicy costmap_reliability{rclcpp::ReliabilityPolicy::Reliable};
+  ReliabilityPolicy costmap_reliability{RMW_QOS_POLICY_RELIABILITY_RELIABLE};
   std::size_t costmap_depth{10};
-  rclcpp::ReliabilityPolicy local_costmap_reliability{rclcpp::ReliabilityPolicy::Reliable};
+  ReliabilityPolicy local_costmap_reliability{RMW_QOS_POLICY_RELIABILITY_RELIABLE};
   std::size_t local_costmap_depth{10};
   bool local_costmap_reliability_inherited{true};
   bool local_costmap_depth_inherited{true};
 
   // Map uses caller-selected durability to support startup autodetect switches.
   [[nodiscard]] rclcpp::QoS make_map_qos(
-    std::optional<rclcpp::DurabilityPolicy> durability_override = std::nullopt) const
+    std::optional<DurabilityPolicy> durability_override = std::nullopt) const
   {
     rclcpp::QoS qos{rclcpp::KeepLast(map_depth)};
     qos.reliability(map_reliability);
@@ -208,7 +211,7 @@ struct TopicQosProfiles
 class MapQosStartupAutodetect
 {
 public:
-  MapQosStartupAutodetect(bool enabled, rclcpp::DurabilityPolicy configured_durability)
+  MapQosStartupAutodetect(bool enabled, DurabilityPolicy configured_durability)
   : enabled_(enabled),
     configured_durability_(configured_durability),
     fallback_durability_(fallback_durability_for(configured_durability)),
@@ -229,13 +232,13 @@ public:
   }
 
   // User-configured durability from parameters.
-  [[nodiscard]] rclcpp::DurabilityPolicy configured_durability() const noexcept
+  [[nodiscard]] DurabilityPolicy configured_durability() const noexcept
   {
     return configured_durability_;
   }
 
   // Currently active durability used by the map subscription.
-  [[nodiscard]] rclcpp::DurabilityPolicy active_durability() const noexcept
+  [[nodiscard]] DurabilityPolicy active_durability() const noexcept
   {
     return active_durability_;
   }
@@ -247,7 +250,7 @@ public:
   }
 
   // Handles one timeout tick: switch once to fallback, then terminate autodetect.
-  [[nodiscard]] std::optional<rclcpp::DurabilityPolicy> on_timeout()
+  [[nodiscard]] std::optional<DurabilityPolicy> on_timeout()
   {
     if (!active()) {
       return std::nullopt;
@@ -270,14 +273,14 @@ public:
   }
 
 private:
-  static std::optional<rclcpp::DurabilityPolicy> fallback_durability_for(
-    rclcpp::DurabilityPolicy durability)
+  static std::optional<DurabilityPolicy> fallback_durability_for(
+    DurabilityPolicy durability)
   {
-    if (durability == rclcpp::DurabilityPolicy::TransientLocal) {
-      return rclcpp::DurabilityPolicy::Volatile;
+    if (durability == RMW_QOS_POLICY_DURABILITY_TRANSIENT_LOCAL) {
+      return RMW_QOS_POLICY_DURABILITY_VOLATILE;
     }
-    if (durability == rclcpp::DurabilityPolicy::Volatile) {
-      return rclcpp::DurabilityPolicy::TransientLocal;
+    if (durability == RMW_QOS_POLICY_DURABILITY_VOLATILE) {
+      return RMW_QOS_POLICY_DURABILITY_TRANSIENT_LOCAL;
     }
     return std::nullopt;
   }
@@ -285,9 +288,9 @@ private:
   bool enabled_{false};
   bool active_{true};
   bool fallback_attempted_{false};
-  rclcpp::DurabilityPolicy configured_durability_{rclcpp::DurabilityPolicy::TransientLocal};
-  std::optional<rclcpp::DurabilityPolicy> fallback_durability_;
-  rclcpp::DurabilityPolicy active_durability_{rclcpp::DurabilityPolicy::TransientLocal};
+  DurabilityPolicy configured_durability_{RMW_QOS_POLICY_DURABILITY_TRANSIENT_LOCAL};
+  std::optional<DurabilityPolicy> fallback_durability_;
+  DurabilityPolicy active_durability_{RMW_QOS_POLICY_DURABILITY_TRANSIENT_LOCAL};
 };
 
 }  // namespace frontier_exploration_ros2

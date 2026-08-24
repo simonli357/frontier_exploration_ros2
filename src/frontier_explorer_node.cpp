@@ -455,7 +455,7 @@ bool FrontierExplorerNode::quitRequested() const
   return quit_requested_;
 }
 
-void FrontierExplorerNode::createMapSubscription(rclcpp::DurabilityPolicy map_durability)
+void FrontierExplorerNode::createMapSubscription(DurabilityPolicy map_durability)
 {
   map_sub_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
     params_.map_topic,
@@ -927,9 +927,9 @@ void FrontierExplorerNode::mapAutodetectTimeoutCallback()
   // Work in two phases:
   //   1) Decide state transition under lock.
   //   2) Perform ROS side effects (re-subscribe / log) outside lock.
-  std::optional<rclcpp::DurabilityPolicy> switched_durability;
+  std::optional<DurabilityPolicy> switched_durability;
   bool should_log_failed_completion = false;
-  rclcpp::DurabilityPolicy selected_durability = topic_qos_profiles_.map_durability;
+  DurabilityPolicy selected_durability = topic_qos_profiles_.map_durability;
 
   {
     std::lock_guard<std::mutex> lock(map_autodetect_mutex_);
@@ -968,7 +968,7 @@ void FrontierExplorerNode::mapAutodetectTimeoutCallback()
   }
 }
 
-void FrontierExplorerNode::logMapAutodetectStart(rclcpp::DurabilityPolicy selected_durability)
+void FrontierExplorerNode::logMapAutodetectStart(DurabilityPolicy selected_durability)
 {
   if (!map_qos_autodetect_on_startup_) {
     return;
@@ -981,7 +981,7 @@ void FrontierExplorerNode::logMapAutodetectStart(rclcpp::DurabilityPolicy select
     map_qos_autodetect_timeout_s_);
 }
 
-void FrontierExplorerNode::logMapAutodetectSwitch(rclcpp::DurabilityPolicy selected_durability)
+void FrontierExplorerNode::logMapAutodetectSwitch(DurabilityPolicy selected_durability)
 {
   if (!map_qos_autodetect_on_startup_) {
     return;
@@ -996,7 +996,7 @@ void FrontierExplorerNode::logMapAutodetectSwitch(rclcpp::DurabilityPolicy selec
 
 void FrontierExplorerNode::logMapAutodetectComplete(
   const std::string & result,
-  rclcpp::DurabilityPolicy selected_durability)
+  DurabilityPolicy selected_durability)
 {
   if (!map_qos_autodetect_on_startup_) {
     return;
@@ -1075,7 +1075,7 @@ void FrontierExplorerNode::occupancyGridCallback(const nav_msgs::msg::OccupancyG
 
   bool should_log_complete = false;
   std::string complete_result;
-  rclcpp::DurabilityPolicy selected_durability = topic_qos_profiles_.map_durability;
+  DurabilityPolicy selected_durability = topic_qos_profiles_.map_durability;
 
   {
     std::lock_guard<std::mutex> lock(map_autodetect_mutex_);

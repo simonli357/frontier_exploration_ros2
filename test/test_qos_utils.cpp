@@ -48,10 +48,10 @@ TEST(QosUtilsTests, ResolveProfilesParsesAndInheritsLocalCostmap)
     "inherit",
     -1);
 
-  EXPECT_EQ(profiles.map_durability, rclcpp::DurabilityPolicy::TransientLocal);
-  EXPECT_EQ(profiles.map_reliability, rclcpp::ReliabilityPolicy::Reliable);
+  EXPECT_EQ(profiles.map_durability, RMW_QOS_POLICY_DURABILITY_TRANSIENT_LOCAL);
+  EXPECT_EQ(profiles.map_reliability, RMW_QOS_POLICY_RELIABILITY_RELIABLE);
   EXPECT_EQ(profiles.map_depth, 1u);
-  EXPECT_EQ(profiles.costmap_reliability, rclcpp::ReliabilityPolicy::BestEffort);
+  EXPECT_EQ(profiles.costmap_reliability, RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT);
   EXPECT_EQ(profiles.costmap_depth, 7u);
   EXPECT_EQ(profiles.local_costmap_reliability, profiles.costmap_reliability);
   EXPECT_EQ(profiles.local_costmap_depth, profiles.costmap_depth);
@@ -94,13 +94,13 @@ TEST(QosUtilsTests, InvalidProfileValueThrows)
 // Startup-only autodetect should switch at most once, then terminate.
 TEST(QosUtilsTests, StartupAutodetectSwitchesDurabilityOnceThenStops)
 {
-  MapQosStartupAutodetect autodetect(true, rclcpp::DurabilityPolicy::TransientLocal);
+  MapQosStartupAutodetect autodetect(true, RMW_QOS_POLICY_DURABILITY_TRANSIENT_LOCAL);
   ASSERT_TRUE(autodetect.active());
   EXPECT_FALSE(autodetect.fallback_attempted());
 
   const auto first_switch = autodetect.on_timeout();
   ASSERT_TRUE(first_switch.has_value());
-  EXPECT_EQ(*first_switch, rclcpp::DurabilityPolicy::Volatile);
+  EXPECT_EQ(*first_switch, RMW_QOS_POLICY_DURABILITY_VOLATILE);
   EXPECT_TRUE(autodetect.active());
   EXPECT_TRUE(autodetect.fallback_attempted());
 
@@ -111,7 +111,7 @@ TEST(QosUtilsTests, StartupAutodetectSwitchesDurabilityOnceThenStops)
 
 TEST(QosUtilsTests, StartupAutodetectWithoutFallbackStopsAfterTimeout)
 {
-  MapQosStartupAutodetect autodetect(true, rclcpp::DurabilityPolicy::SystemDefault);
+  MapQosStartupAutodetect autodetect(true, RMW_QOS_POLICY_DURABILITY_SYSTEM_DEFAULT);
   ASSERT_TRUE(autodetect.active());
   EXPECT_FALSE(autodetect.can_fallback());
 
@@ -122,7 +122,7 @@ TEST(QosUtilsTests, StartupAutodetectWithoutFallbackStopsAfterTimeout)
 
 TEST(QosUtilsTests, StartupAutodetectStopsWhenMapArrives)
 {
-  MapQosStartupAutodetect autodetect(true, rclcpp::DurabilityPolicy::Volatile);
+  MapQosStartupAutodetect autodetect(true, RMW_QOS_POLICY_DURABILITY_VOLATILE);
   ASSERT_TRUE(autodetect.active());
 
   autodetect.on_map_received();

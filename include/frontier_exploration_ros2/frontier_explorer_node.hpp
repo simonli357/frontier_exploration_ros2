@@ -71,13 +71,13 @@ private:
   bool maybeFinalizeMapProcessingRateEstimate();
 
   void dispatchGoalRequest(const GoalDispatchRequest & request);
-  void createMapSubscription(rclcpp::DurabilityPolicy map_durability);
+  void createMapSubscription(DurabilityPolicy map_durability);
   void mapAutodetectTimeoutCallback();
-  void logMapAutodetectStart(rclcpp::DurabilityPolicy selected_durability);
-  void logMapAutodetectSwitch(rclcpp::DurabilityPolicy selected_durability);
+  void logMapAutodetectStart(DurabilityPolicy selected_durability);
+  void logMapAutodetectSwitch(DurabilityPolicy selected_durability);
   void logMapAutodetectComplete(
     const std::string & result,
-    rclcpp::DurabilityPolicy selected_durability);
+    DurabilityPolicy selected_durability);
   double mapAutodetectElapsedSeconds() const;
   void mapProcessingTimerCallback();
   void suppressionWatchdogCallback();
