@@ -239,6 +239,7 @@ FrontierExplorerNode::FrontierExplorerNode(const rclcpp::NodeOptions & options)
   params_.frontier_suppression_max_regions = this->get_parameter(
     "frontier_suppression_max_regions").as_int();
   completion_event_config_.enabled = this->get_parameter("completion_event_enabled").as_bool();
+  params_.completion_event_enabled = completion_event_config_.enabled;
   completion_event_config_.topic = this->get_parameter("completion_event_topic").as_string();
   if (completion_event_config_.enabled && completion_event_config_.topic.empty()) {
     throw std::runtime_error(
@@ -1276,6 +1277,12 @@ bool FrontierExplorerNode::debugOutputsEnabled() const
 
 void FrontierExplorerNode::dispatchGoalRequest(const GoalDispatchRequest & request)
 {
+  if (request.goal_kind == "frontier") {
+    // A new reachable target invalidates any earlier frontier-exhaustion event.
+    // Re-arm publishing so the supervisor can observe a later stable completion.
+    completion_event_published_ = false;
+  }
+
   NavigateToPose::Goal goal_request;
   // Core provides fully prepared pose/action metadata in request.
   goal_request.pose = request.goal_pose;

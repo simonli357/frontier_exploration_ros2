@@ -428,6 +428,58 @@ TEST(FrontierSearchTests, ExplorationCompleteCallbackRunsWhenNoFrontiersRemain)
   EXPECT_TRUE(core->return_to_start_completed);
 }
 
+TEST(FrontierSearchTests, SupervisedCompletionKeepsWatchingForNewFrontiers)
+{
+  auto core = make_snapshot_core();
+  core->params.return_to_start_on_complete = false;
+  core->params.completion_event_enabled = true;
+
+  int completion_calls = 0;
+  int dispatch_calls = 0;
+  bool frontier_available = false;
+  core->callbacks.get_current_pose = []() {
+      return std::optional<geometry_msgs::msg::Pose>(make_pose(2.0, 2.0));
+    };
+  core->callbacks.on_exploration_complete = [&completion_calls]() {
+      completion_calls += 1;
+    };
+  core->callbacks.wait_for_action_server = [](double) {return true;};
+  core->callbacks.dispatch_goal_request = [&dispatch_calls](const GoalDispatchRequest &) {
+      dispatch_calls += 1;
+    };
+  core->callbacks.frontier_search = [&frontier_available](
+    const geometry_msgs::msg::Pose &,
+    const OccupancyGrid2d &,
+    const OccupancyGrid2d &,
+    const std::optional<OccupancyGrid2d> &,
+    double,
+    bool)
+    {
+      FrontierSearchResult result;
+      if (frontier_available) {
+        result.frontiers = {dummy_frontier(4.0, 2.0)};
+      }
+      result.robot_map_cell = {2, 2};
+      return result;
+    };
+
+  core->try_send_next_goal();
+  core->try_send_next_goal();
+
+  EXPECT_EQ(completion_calls, 1);
+  EXPECT_FALSE(core->return_to_start_completed);
+  EXPECT_EQ(dispatch_calls, 0);
+
+  frontier_available = true;
+  // Model a changed decision-map output. A raw-map callback that produces the
+  // same decision map intentionally keeps the cached frontier snapshot valid.
+  core->decision_map_generation += 1;
+  core->try_send_next_goal();
+
+  EXPECT_EQ(completion_calls, 1);
+  EXPECT_EQ(dispatch_calls, 1);
+}
+
 // Frontier snapshot cache behavior.
 TEST(FrontierSnapshotTests, SnapshotCacheHitsOnSameGenerationsAndRobotCell)
 {

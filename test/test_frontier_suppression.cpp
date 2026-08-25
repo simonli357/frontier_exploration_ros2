@@ -20,6 +20,7 @@ limitations under the License.
 #include <geometry_msgs/msg/pose.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <string>
@@ -338,6 +339,78 @@ TEST(FrontierSuppressionCoreTests, AllSuppressedCanDispatchTemporaryReturnToStar
   ASSERT_EQ(dispatch_calls, 2);
   EXPECT_EQ(dispatched_goal_kinds.back(), "suppressed_return_to_start");
   EXPECT_FALSE(core.return_to_start_completed);
+}
+
+TEST(FrontierSuppressionCoreTests, AllSuppressedSignalsSupervisedCompletionWhenStaying)
+{
+  int64_t now_ns = 1'000'000'000;
+  int dispatch_calls = 0;
+  int completion_calls = 0;
+  std::vector<std::string> info_logs;
+
+  FrontierExplorerCoreParams params;
+  params.frontier_suppression_enabled = true;
+  params.frontier_suppression_attempt_threshold = 1;
+  params.frontier_suppression_startup_grace_period_s = 0.0;
+  params.all_frontiers_suppressed_behavior = "stay";
+  params.return_to_start_on_complete = false;
+  params.completion_event_enabled = true;
+
+  FrontierExplorerCoreCallbacks callbacks;
+  callbacks.now_ns = [&now_ns]() {return now_ns;};
+  callbacks.get_current_pose = []() {
+      return std::optional<geometry_msgs::msg::Pose>(make_pose(1.0, 1.0));
+    };
+  callbacks.wait_for_action_server = [](double) {return true;};
+  callbacks.dispatch_goal_request = [&dispatch_calls](const GoalDispatchRequest &) {
+      dispatch_calls += 1;
+    };
+  callbacks.on_exploration_complete = [&completion_calls]() {completion_calls += 1;};
+  callbacks.log_info = [&info_logs](const std::string & message) {
+      info_logs.push_back(message);
+    };
+  callbacks.log_warn = [](const std::string &) {};
+  callbacks.log_debug = [](const std::string &) {};
+  callbacks.log_error = [](const std::string &) {};
+  callbacks.frontier_search = [](
+    const geometry_msgs::msg::Pose &,
+    const OccupancyGrid2d &,
+    const OccupancyGrid2d &,
+    const std::optional<OccupancyGrid2d> &,
+    double,
+    bool)
+    {
+      FrontierSearchResult result;
+      result.frontiers = {make_candidate(4.0, 4.0)};
+      result.robot_map_cell = {1, 1};
+      return result;
+    };
+
+  FrontierExplorerCore core(params, callbacks);
+  auto map_msg = build_grid(20, 20, 0);
+  auto costmap_msg = build_grid(20, 20, 0);
+  core.map = OccupancyGrid2d(map_msg);
+  core.costmap = OccupancyGrid2d(costmap_msg);
+  core.map_generation = 1;
+  core.costmap_generation = 1;
+
+  core.try_send_next_goal();
+  ASSERT_EQ(dispatch_calls, 1);
+  core.goal_response_callback(core.current_dispatch_id, nullptr, false, "rejected");
+
+  core.try_send_next_goal();
+
+  EXPECT_EQ(dispatch_calls, 1);
+  EXPECT_EQ(completion_calls, 1);
+  EXPECT_FALSE(core.return_to_start_completed);
+  EXPECT_NE(
+    std::find_if(
+      info_logs.begin(),
+      info_logs.end(),
+      [](const std::string & message) {
+        return message.find("signaling supervised completion") != std::string::npos;
+      }),
+    info_logs.end());
 }
 
 TEST(FrontierSuppressionCoreTests, TemporaryReturnToStartPreemptsWhenFrontiersBecomeAvailableAgain)

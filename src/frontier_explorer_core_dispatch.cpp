@@ -139,9 +139,8 @@ void FrontierExplorerCore::try_send_next_goal()
       // Log once per no-frontier streak to avoid repetitive output.
       callbacks.log_info("No more frontiers found");
       no_frontiers_reported = true;
+      handle_exploration_complete(*current_pose);
     }
-
-    handle_exploration_complete(*current_pose);
     return;
   }
 
@@ -793,9 +792,13 @@ void FrontierExplorerCore::handle_exploration_complete(const geometry_msgs::msg:
     return;
   }
 
-  if (!params.return_to_start_on_complete || !start_pose.has_value())
-  {
-    // Mark completion when return-to-start is disabled (or unavailable) to stop repeated no-frontier scans.
+  if (!params.return_to_start_on_complete || !start_pose.has_value()) {
+    if (params.completion_event_enabled) {
+      // A supervisor owns the stability window. Keep monitoring map updates so
+      // a frontier that reappears can be dispatched without resetting session state.
+      return;
+    }
+    // Standalone mode keeps the historical terminal latch.
     return_to_start_completed = true;
     return;
   }

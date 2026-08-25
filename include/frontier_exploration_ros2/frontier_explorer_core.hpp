@@ -112,6 +112,7 @@ struct FrontierExplorerCoreParams
   double post_goal_min_settle{0.80};
   double map_processing_rate_hz{1.0};
   bool return_to_start_on_complete{true};
+  bool completion_event_enabled{false};
   std::string all_frontiers_suppressed_behavior{"stay"};
   bool frontier_suppression_enabled{false};
   int frontier_suppression_attempt_threshold{3};

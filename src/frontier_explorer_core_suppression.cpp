@@ -152,6 +152,16 @@ void FrontierExplorerCore::handle_all_frontiers_suppressed(
   const geometry_msgs::msg::Pose & current_pose)
 {
   if (
+    params.all_frontiers_suppressed_behavior == "stay" &&
+    params.completion_event_enabled)
+  {
+    callbacks.log_info(
+      "All reachable frontier candidates are suppressed; signaling supervised completion");
+    handle_exploration_complete(current_pose);
+    return;
+  }
+
+  if (
     !should_return_to_start_when_all_frontiers_suppressed() ||
     !start_pose.has_value() ||
     suppressed_return_to_start_started)
