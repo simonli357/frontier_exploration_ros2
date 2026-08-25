@@ -128,6 +128,47 @@ TEST(ControlCoreSessionTests, StartExplorationSessionResetsSessionState)
   EXPECT_FALSE(core.frontier_suppression_);
 }
 
+TEST(ControlCoreSessionTests, SuspendAndResumePreserveSuppressionState)
+{
+  FrontierExplorerCoreCallbacks callbacks;
+  callbacks.now_ns = []() {return int64_t{5'000'000'000};};
+  FrontierExplorerCore core(FrontierExplorerCoreParams{}, callbacks);
+
+  geometry_msgs::msg::PoseStamped persistent_start_pose;
+  persistent_start_pose.pose = make_pose(2.0, 3.0);
+  core.start_pose = persistent_start_pose;
+  core.frontier_suppression_ = std::make_unique<FrontierSuppression>(
+    FrontierSuppressionConfig{});
+  core.frontier_suppression_->record_failed_attempt(
+    make_frontier(4.0, 5.0),
+    callbacks.now_ns());
+  core.frontier_suppression_activation_ns_ = 7'000'000'000;
+  core.map = OccupancyGrid2d(build_grid(10, 10, 0));
+  core.costmap = OccupancyGrid2d(build_grid(10, 10, 0));
+
+  core.suspend_exploration_session("test suspend");
+
+  EXPECT_FALSE(core.exploration_enabled);
+  EXPECT_FALSE(core.map.has_value());
+  EXPECT_FALSE(core.costmap.has_value());
+  EXPECT_TRUE(core.suppression_state_allocated());
+  EXPECT_EQ(core.suppression_attempt_count(), 1U);
+  ASSERT_TRUE(core.frontier_suppression_activation_ns_.has_value());
+  EXPECT_EQ(*core.frontier_suppression_activation_ns_, 7'000'000'000);
+
+  core.resume_exploration_session();
+
+  EXPECT_TRUE(core.exploration_enabled);
+  EXPECT_TRUE(core.suppression_state_allocated());
+  EXPECT_EQ(core.suppression_attempt_count(), 1U);
+  ASSERT_TRUE(core.start_pose.has_value());
+  EXPECT_DOUBLE_EQ(core.start_pose->pose.position.x, persistent_start_pose.pose.position.x);
+  EXPECT_DOUBLE_EQ(core.start_pose->pose.position.y, persistent_start_pose.pose.position.y);
+
+  core.start_exploration_session();
+  EXPECT_FALSE(core.suppression_state_allocated());
+}
+
 TEST(ControlCoreSessionTests, StopAndStartSessionsPreserveOriginalStartPose)
 {
   FrontierExplorerCoreCallbacks callbacks;
@@ -360,6 +401,52 @@ TEST_F(FrontierControlNodeTests, StopServiceReturnsNodeToColdIdle)
   EXPECT_EQ(response->state, ControlExploration::Request::STATE_IDLE);
 
   ASSERT_TRUE(wait_for_condition([this]() { return !node_->hasActiveExplorationSubscriptions(); }));
+}
+
+TEST_F(FrontierControlNodeTests, SuspendAndResumeToggleSubscriptions)
+{
+  create_node(false);
+
+  const auto resume_without_session = call_control_service(
+    ControlExploration::Request::ACTION_RESUME);
+  ASSERT_NE(resume_without_session, nullptr);
+  EXPECT_FALSE(resume_without_session->accepted);
+
+  const auto start_response = call_control_service(
+    ControlExploration::Request::ACTION_START);
+  ASSERT_NE(start_response, nullptr);
+  ASSERT_TRUE(start_response->accepted);
+  ASSERT_TRUE(wait_for_condition([this]() { return node_->hasActiveExplorationSubscriptions(); }));
+
+  const auto suspend_response = call_control_service(
+    ControlExploration::Request::ACTION_SUSPEND);
+  ASSERT_NE(suspend_response, nullptr);
+  ASSERT_TRUE(suspend_response->accepted);
+  EXPECT_EQ(suspend_response->state, ControlExploration::Request::STATE_IDLE);
+  ASSERT_TRUE(wait_for_condition([this]() { return !node_->hasActiveExplorationSubscriptions(); }));
+
+  const auto resume_response = call_control_service(
+    ControlExploration::Request::ACTION_RESUME);
+  ASSERT_NE(resume_response, nullptr);
+  ASSERT_TRUE(resume_response->accepted);
+  EXPECT_EQ(resume_response->state, ControlExploration::Request::STATE_RUNNING);
+  ASSERT_TRUE(wait_for_condition([this]() { return node_->hasActiveExplorationSubscriptions(); }));
+}
+
+TEST_F(FrontierControlNodeTests, SuspendAndResumeCannotBeDelayed)
+{
+  create_node(true);
+  ASSERT_TRUE(wait_for_condition([this]() { return node_->hasActiveExplorationSubscriptions(); }));
+
+  const auto suspend_response = call_control_service(
+    ControlExploration::Request::ACTION_SUSPEND, 0.1);
+  ASSERT_NE(suspend_response, nullptr);
+  EXPECT_FALSE(suspend_response->accepted);
+
+  const auto resume_response = call_control_service(
+    ControlExploration::Request::ACTION_RESUME, 0.1);
+  ASSERT_NE(resume_response, nullptr);
+  EXPECT_FALSE(resume_response->accepted);
 }
 
 TEST_F(FrontierControlNodeTests, DelayedStopIsRejectedWhileColdIdle)

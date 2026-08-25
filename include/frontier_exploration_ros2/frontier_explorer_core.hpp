@@ -91,6 +91,7 @@ struct FrontierExplorerCoreParams
   double frontier_candidate_min_goal_distance_m{0.0};
   double frontier_candidate_max_span_m{0.0};
   double frontier_selection_min_distance{0.5};
+  double frontier_goal_standoff_m{0.0};
   bool escape_enabled{false};
   double frontier_visit_tolerance{0.30};
   bool goal_preemption_enabled{false};
@@ -272,6 +273,9 @@ public:
 
   void start_exploration_session();
   void stop_exploration_session(const std::string & reason = "Stopping exploration session");
+  void resume_exploration_session();
+  void suspend_exploration_session(
+    const std::string & reason = "Suspending exploration session");
   [[nodiscard]] bool ready_for_shutdown() const;
 
   void handle_exploration_complete(const geometry_msgs::msg::Pose & current_pose);
@@ -486,7 +490,7 @@ private:
   void start_active_goal_progress_tracking();
   void commit_deferred_costmap_search_input_updates();
   void note_active_goal_progress(double distance_remaining);
-  void reset_exploration_runtime_state(bool clear_maps);
+  void reset_exploration_runtime_state(bool clear_maps, bool clear_suppression = true);
 
   std::optional<DispatchContext> dispatch_context_for(int dispatch_id) const;
 };

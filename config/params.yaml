@@ -15,6 +15,9 @@ frontier_explorer:
     # Nav2 NavigateToPose action name.
     navigate_to_pose_action_name: navigate_to_pose
 
+    # Optional per-goal Nav2 behavior tree. Empty uses bt_navigator's default tree.
+    navigate_to_pose_behavior_tree: ""
+
     # Global frame used for frontier goals and TF lookups.
     global_frame: map
  
@@ -157,6 +160,9 @@ frontier_explorer:
     # Used for dispatch not filterization.
     # Recommended value: 2.5x size of robot's radius
     frontier_selection_min_distance: 0.8
+
+    # Pull frontier navigation goals into known free space by this distance.
+    frontier_goal_standoff_m: 0.0
 
     # Distance used to treat a frontier region as recently visited.
     # Use if you are having navigation loops.

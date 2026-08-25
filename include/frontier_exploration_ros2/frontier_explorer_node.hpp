@@ -87,8 +87,11 @@ private:
   void handleControlRequest(
     const std::shared_ptr<srv::ControlExploration::Request> request,
     std::shared_ptr<srv::ControlExploration::Response> response);
-  void startExplorationRuntime();
-  void requestStopExplorationRuntime(bool quit_after_stop, const std::string & reason);
+  void startExplorationRuntime(bool resume_session = false);
+  void requestStopExplorationRuntime(
+    bool quit_after_stop,
+    const std::string & reason,
+    bool preserve_session = false);
   void enterColdIdle();
   void ensureWatchdogTimer();
   void ensureControlTimerCanceled();
@@ -115,6 +118,7 @@ private:
   TopicQosProfiles topic_qos_profiles_;
   bool autostart_{true};
   bool control_service_enabled_{true};
+  std::string navigate_to_pose_behavior_tree_;
   bool map_qos_autodetect_on_startup_{false};
   double map_qos_autodetect_timeout_s_{2.0};
 
@@ -156,6 +160,7 @@ private:
   bool pending_quit_after_stop_{false};
   bool quit_requested_{false};
   RuntimeState runtime_state_{RuntimeState::COLD_IDLE};
+  bool session_suspended_{false};
   bool suppression_activation_logged_{false};
   std::optional<std::chrono::steady_clock::time_point> suppression_activation_at_;
 

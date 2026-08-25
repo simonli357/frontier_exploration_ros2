@@ -513,8 +513,9 @@ geometry_msgs::msg::PoseStamped FrontierExplorerCore::build_dispatch_goal_pose(
     };
 
   const auto fallback_goal_pose = build_goal_pose(target_frontier, current_pose);
+  const bool standoff_enabled = params.frontier_goal_standoff_m > 0.0;
   if (bypass_min_distance_dispatch ||
-    params.frontier_selection_min_distance <= 0.0 ||
+    (!standoff_enabled && params.frontier_selection_min_distance <= 0.0) ||
     !map.has_value())
   {
     return fallback_goal_pose;
@@ -524,9 +525,12 @@ geometry_msgs::msg::PoseStamped FrontierExplorerCore::build_dispatch_goal_pose(
   const double distance_to_robot = std::hypot(
     target_point.first - current_pose.position.x,
     target_point.second - current_pose.position.y);
-  if (distance_to_robot >= params.frontier_selection_min_distance) {
+  if (!standoff_enabled && distance_to_robot >= params.frontier_selection_min_distance) {
     return fallback_goal_pose;
   }
+
+  const double target_clearance_m = standoff_enabled ?
+    params.frontier_goal_standoff_m : params.frontier_selection_min_distance;
 
   int target_map_x = 0;
   int target_map_y = 0;
@@ -534,7 +538,8 @@ geometry_msgs::msg::PoseStamped FrontierExplorerCore::build_dispatch_goal_pose(
     return fallback_goal_pose;
   }
 
-  const auto is_dispatch_cell_eligible = [this, &current_pose, &target_point](int map_x, int map_y) {
+  const auto is_dispatch_cell_eligible =
+    [this, &current_pose, &target_point, target_clearance_m](int map_x, int map_y) {
       if (map->getCost(map_x, map_y) != static_cast<int>(OccupancyGrid2d::CostValues::FreeSpace)) {
         return false;
       }
@@ -543,14 +548,17 @@ geometry_msgs::msg::PoseStamped FrontierExplorerCore::build_dispatch_goal_pose(
       const double robot_distance = std::hypot(
         world_point.first - current_pose.position.x,
         world_point.second - current_pose.position.y);
-      if (robot_distance < params.frontier_selection_min_distance) {
+      if (
+        params.frontier_selection_min_distance > 0.0 &&
+        robot_distance < params.frontier_selection_min_distance)
+      {
         return false;
       }
 
       const double target_distance = std::hypot(
         world_point.first - target_point.first,
         world_point.second - target_point.second);
-      if (target_distance < params.frontier_selection_min_distance) {
+      if (target_distance < target_clearance_m) {
         return false;
       }
 
@@ -570,7 +578,8 @@ geometry_msgs::msg::PoseStamped FrontierExplorerCore::build_dispatch_goal_pose(
   const int max_radius = std::max(map->getSizeX(), map->getSizeY());
   for (int radius = 0; radius < max_radius; ++radius) {
     std::optional<std::pair<double, double>> best_world_point;
-    double best_distance_sq = std::numeric_limits<double>::infinity();
+    double best_target_distance_sq = std::numeric_limits<double>::infinity();
+    double best_robot_distance_sq = std::numeric_limits<double>::infinity();
 
     const auto consider_cell = [&](int map_x, int map_y) {
         if (map_x < 0 || map_y < 0 || map_x >= map->getSizeX() || map_y >= map->getSizeY()) {
@@ -582,8 +591,18 @@ geometry_msgs::msg::PoseStamped FrontierExplorerCore::build_dispatch_goal_pose(
 
         const auto world_point = map->mapToWorld(map_x, map_y);
         const double target_distance_sq = squared_distance(world_point, target_point);
-        if (target_distance_sq < best_distance_sq) {
-          best_distance_sq = target_distance_sq;
+        const std::pair<double, double> robot_point{
+          current_pose.position.x,
+          current_pose.position.y,
+        };
+        const double robot_distance_sq = squared_distance(world_point, robot_point);
+        if (
+          target_distance_sq < best_target_distance_sq ||
+          (std::abs(target_distance_sq - best_target_distance_sq) <= 1e-9 &&
+          robot_distance_sq < best_robot_distance_sq))
+        {
+          best_target_distance_sq = target_distance_sq;
+          best_robot_distance_sq = robot_distance_sq;
           best_world_point = world_point;
         }
       };

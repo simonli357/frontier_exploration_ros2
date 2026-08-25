@@ -86,6 +86,7 @@ FrontierExplorerNode::FrontierExplorerNode(const rclcpp::NodeOptions & options)
   this->declare_parameter<std::string>("costmap_topic", "global_costmap/costmap");
   this->declare_parameter<std::string>("local_costmap_topic", "local_costmap/costmap");
   this->declare_parameter<std::string>("navigate_to_pose_action_name", "navigate_to_pose");
+  this->declare_parameter<std::string>("navigate_to_pose_behavior_tree", "");
   this->declare_parameter<std::string>("global_frame", "map");
   this->declare_parameter<std::string>("robot_base_frame", "base_footprint");
   this->declare_parameter<std::string>("frontier_marker_topic", "explore/frontiers");
@@ -122,6 +123,7 @@ FrontierExplorerNode::FrontierExplorerNode(const rclcpp::NodeOptions & options)
   this->declare_parameter<double>("frontier_candidate_min_goal_distance_m", 0.0);
   this->declare_parameter<double>("frontier_candidate_max_span_m", 0.0);
   this->declare_parameter<double>("frontier_selection_min_distance", 0.5);
+  this->declare_parameter<double>("frontier_goal_standoff_m", 0.0);
   this->declare_parameter<bool>("escape_enabled", false);
   this->declare_parameter<double>("frontier_visit_tolerance", 0.30);
   this->declare_parameter<bool>("goal_preemption_enabled", false);
@@ -156,6 +158,8 @@ FrontierExplorerNode::FrontierExplorerNode(const rclcpp::NodeOptions & options)
   params_.costmap_topic = this->get_parameter("costmap_topic").as_string();
   params_.local_costmap_topic = this->get_parameter("local_costmap_topic").as_string();
   params_.navigate_to_pose_action_name = this->get_parameter("navigate_to_pose_action_name").as_string();
+  navigate_to_pose_behavior_tree_ = this->get_parameter(
+    "navigate_to_pose_behavior_tree").as_string();
   params_.global_frame = this->get_parameter("global_frame").as_string();
   params_.robot_base_frame = this->get_parameter("robot_base_frame").as_string();
   params_.frontier_marker_topic = this->get_parameter("frontier_marker_topic").as_string();
@@ -198,6 +202,9 @@ FrontierExplorerNode::FrontierExplorerNode(const rclcpp::NodeOptions & options)
     "frontier_candidate_max_span_m").as_double();
   params_.frontier_selection_min_distance = this->get_parameter(
     "frontier_selection_min_distance").as_double();
+  params_.frontier_goal_standoff_m = std::max(
+    0.0,
+    this->get_parameter("frontier_goal_standoff_m").as_double());
   params_.escape_enabled = this->get_parameter("escape_enabled").as_bool();
   params_.frontier_visit_tolerance = this->get_parameter("frontier_visit_tolerance").as_double();
   params_.goal_preemption_enabled = this->get_parameter(
@@ -548,27 +555,34 @@ bool FrontierExplorerNode::maybeFinalizeMapProcessingRateEstimate()
   return true;
 }
 
-void FrontierExplorerNode::startExplorationRuntime()
+void FrontierExplorerNode::startExplorationRuntime(bool resume_session)
 {
   completion_event_published_ = false;
   pending_quit_after_stop_ = false;
   quit_requested_ = false;
   runtime_state_ = RuntimeState::RUNNING;
+  session_suspended_ = false;
   ensureDeferredShutdownTimerCanceled();
   ensureStopCompletionTimerCanceled();
-  core_->start_exploration_session();
+  if (resume_session) {
+    core_->resume_exploration_session();
+  } else {
+    core_->start_exploration_session();
+  }
 
   if (params_.frontier_suppression_enabled) {
-    suppression_activation_logged_ = false;
-    suppression_activation_at_ =
-      std::chrono::steady_clock::now() +
-      std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-      std::chrono::duration<double>(params_.frontier_suppression_startup_grace_period_s));
-    if (params_.frontier_suppression_startup_grace_period_s <= 0.0) {
-      RCLCPP_INFO(
-        this->get_logger(),
-        "Frontier suppression startup grace period elapsed; suppression is now active");
-      suppression_activation_logged_ = true;
+    if (!resume_session) {
+      suppression_activation_logged_ = false;
+      suppression_activation_at_ =
+        std::chrono::steady_clock::now() +
+        std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+        std::chrono::duration<double>(params_.frontier_suppression_startup_grace_period_s));
+      if (params_.frontier_suppression_startup_grace_period_s <= 0.0) {
+        RCLCPP_INFO(
+          this->get_logger(),
+          "Frontier suppression startup grace period elapsed; suppression is now active");
+        suppression_activation_logged_ = true;
+      }
     }
     ensureWatchdogTimer();
   }
@@ -731,11 +745,17 @@ void FrontierExplorerNode::scheduleControlRequest(
 
 void FrontierExplorerNode::requestStopExplorationRuntime(
   bool quit_after_stop,
-  const std::string & reason)
+  const std::string & reason,
+  bool preserve_session)
 {
   ensureControlTimerCanceled();
   pending_quit_after_stop_ = quit_after_stop;
-  core_->stop_exploration_session(reason);
+  session_suspended_ = preserve_session;
+  if (preserve_session) {
+    core_->suspend_exploration_session(reason);
+  } else {
+    core_->stop_exploration_session(reason);
+  }
   publishFrontierMarkers({});
   enterColdIdle();
 
@@ -766,6 +786,10 @@ void FrontierExplorerNode::handleControlRequest(
   const bool stop_is_scheduled =
     scheduled_control_request_.has_value() &&
     scheduled_control_request_->action == srv::ControlExploration::Request::ACTION_STOP;
+  const bool resume_requested =
+    request->action == srv::ControlExploration::Request::ACTION_RESUME;
+  const bool suspend_requested =
+    request->action == srv::ControlExploration::Request::ACTION_SUSPEND;
   if (delay_seconds < 0.0) {
     response->accepted = false;
     response->scheduled = false;
@@ -784,7 +808,9 @@ void FrontierExplorerNode::handleControlRequest(
 
   if (
     request->action != srv::ControlExploration::Request::ACTION_START &&
-    request->action != srv::ControlExploration::Request::ACTION_STOP)
+    request->action != srv::ControlExploration::Request::ACTION_STOP &&
+    !resume_requested &&
+    !suspend_requested)
   {
     response->accepted = false;
     response->scheduled = false;
@@ -793,7 +819,18 @@ void FrontierExplorerNode::handleControlRequest(
     return;
   }
 
-  if (request->action == srv::ControlExploration::Request::ACTION_START) {
+  if ((resume_requested || suspend_requested) && delay_seconds > 0.0) {
+    response->accepted = false;
+    response->scheduled = false;
+    response->state = controlState();
+    response->message = "Suspend and resume requests cannot be delayed";
+    return;
+  }
+
+  if (
+    request->action == srv::ControlExploration::Request::ACTION_START ||
+    resume_requested)
+  {
     if (delay_seconds <= 0.0) {
       // Immediate start is the strongest operator intent and should clear any stale timer.
       ensureControlTimerCanceled();
@@ -817,6 +854,13 @@ void FrontierExplorerNode::handleControlRequest(
       response->message = "Exploration is stopping or shutting down";
       return;
     }
+    if (resume_requested && !session_suspended_) {
+      response->accepted = false;
+      response->scheduled = false;
+      response->state = controlState();
+      response->message = "No suspended exploration session is available";
+      return;
+    }
     if (delay_seconds > 0.0) {
       scheduleControlRequest(request->action, delay_seconds, false);
       response->accepted = true;
@@ -826,11 +870,12 @@ void FrontierExplorerNode::handleControlRequest(
       return;
     }
 
-    startExplorationRuntime();
+    startExplorationRuntime(resume_requested);
     response->accepted = true;
     response->scheduled = false;
     response->state = controlState();
-    response->message = "Exploration started";
+    response->message = resume_requested ?
+      "Exploration resumed" : "Exploration started";
     return;
   }
 
@@ -858,16 +903,26 @@ void FrontierExplorerNode::handleControlRequest(
     response->message = "Shutdown is already pending";
     return;
   }
+  if (suspend_requested && runtime_state_ == RuntimeState::COLD_IDLE) {
+    response->accepted = false;
+    response->scheduled = false;
+    response->state = controlState();
+    response->message = "Cannot suspend exploration while it is idle";
+    return;
+  }
 
   requestStopExplorationRuntime(
     request->quit_after_stop,
-    request->quit_after_stop ?
+    suspend_requested ?
+    "Suspending exploration" : request->quit_after_stop ?
     "Stopping exploration and shutting down the node" :
-    "Stopping exploration");
+    "Stopping exploration",
+    suspend_requested);
   response->accepted = true;
   response->scheduled = false;
   response->state = controlState();
-  response->message = request->quit_after_stop ?
+  response->message = suspend_requested ?
+    "Exploration suspended" : request->quit_after_stop ?
     "Stopping exploration and preparing node shutdown" :
     "Stopping exploration";
 }
@@ -1290,6 +1345,7 @@ void FrontierExplorerNode::dispatchGoalRequest(const GoalDispatchRequest & reque
   NavigateToPose::Goal goal_request;
   // Core provides fully prepared pose/action metadata in request.
   goal_request.pose = request.goal_pose;
+  goal_request.behavior_tree = navigate_to_pose_behavior_tree_;
 
   rclcpp_action::Client<NavigateToPose>::SendGoalOptions options;
   options.goal_response_callback = [this, dispatch_id = request.dispatch_id](auto response)

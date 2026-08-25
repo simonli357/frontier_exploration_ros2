@@ -92,6 +92,9 @@ void FrontierExplorerCore::try_send_next_goal()
     if (!all_frontiers_suppressed_reported) {
       callbacks.log_info("All currently detected frontiers are temporarily suppressed");
       all_frontiers_suppressed_reported = true;
+      if (params.completion_event_enabled) {
+        callbacks.on_exploration_complete();
+      }
     }
     handle_all_frontiers_suppressed(*current_pose);
     return;
@@ -114,6 +117,9 @@ void FrontierExplorerCore::try_send_next_goal()
       if (!all_frontiers_suppressed_reported) {
         callbacks.log_info("All currently detected frontiers are temporarily suppressed");
         all_frontiers_suppressed_reported = true;
+        if (params.completion_event_enabled) {
+          callbacks.on_exploration_complete();
+        }
       }
       handle_all_frontiers_suppressed(*current_pose);
       return;
@@ -176,7 +182,9 @@ void FrontierExplorerCore::try_send_next_goal()
     escape_mode_active);
 }
 
-void FrontierExplorerCore::reset_exploration_runtime_state(bool clear_maps)
+void FrontierExplorerCore::reset_exploration_runtime_state(
+  bool clear_maps,
+  bool clear_suppression)
 {
   clear_post_goal_wait_state();
   clear_active_goal_progress_state();
@@ -202,8 +210,10 @@ void FrontierExplorerCore::reset_exploration_runtime_state(bool clear_maps)
   frontier_snapshot.reset();
   raw_frontier_debug_cache.reset();
   mrtsp_order_cache.reset();
-  frontier_suppression_.reset();
-  frontier_suppression_activation_ns_.reset();
+  if (clear_suppression) {
+    frontier_suppression_.reset();
+    frontier_suppression_activation_ns_.reset();
+  }
 
   if (clear_maps) {
     map.reset();
@@ -241,6 +251,21 @@ void FrontierExplorerCore::stop_exploration_session(const std::string & reason)
 {
   exploration_enabled = false;
   reset_exploration_runtime_state(true);
+  if (goal_in_progress) {
+    request_active_goal_cancel(reason);
+  }
+}
+
+void FrontierExplorerCore::resume_exploration_session()
+{
+  reset_exploration_runtime_state(true, false);
+  exploration_enabled = true;
+}
+
+void FrontierExplorerCore::suspend_exploration_session(const std::string & reason)
+{
+  exploration_enabled = false;
+  reset_exploration_runtime_state(true, false);
   if (goal_in_progress) {
     request_active_goal_cancel(reason);
   }
@@ -911,6 +936,19 @@ const auto goal_pose = build_dispatch_goal_pose(
       dispatch_sequence.front(),
     current_pose,
     bypass_min_distance_dispatch);
+  const auto selected_point = frontier_position(dispatch_sequence.front());
+  if (
+    std::hypot(
+      goal_pose.pose.position.x - selected_point.first,
+      goal_pose.pose.position.y - selected_point.second) > 0.05)
+  {
+    callbacks.log_info(
+      "Using costmap-safe frontier standoff goal: frontier=(" +
+      detail::format_meters(selected_point.first) + ", " +
+      detail::format_meters(selected_point.second) + "), dispatch=(" +
+      detail::format_meters(goal_pose.pose.position.x) + ", " +
+      detail::format_meters(goal_pose.pose.position.y) + ")");
+  }
   if (debug_outputs_enabled()) {
     callbacks.publish_selected_frontier_pose(goal_pose);
   }
