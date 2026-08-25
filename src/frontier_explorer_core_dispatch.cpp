@@ -904,25 +904,35 @@ bool FrontierExplorerCore::send_frontier_goal(
   }
 
   std::size_t dispatch_index = 0U;
+  std::optional<geometry_msgs::msg::PoseStamped> goal_pose;
   for (; dispatch_index < frontier_sequence.size(); ++dispatch_index) {
     const auto & candidate_frontier = frontier_sequence[dispatch_index];
-    if (!params.goal_skip_on_blocked_goal) {
-      break;
+    if (params.goal_skip_on_blocked_goal) {
+      const auto cost_status = frontier_cost_status(
+        std::optional<FrontierLike>{candidate_frontier});
+      if (cost_status.has_value()) {
+        callbacks.log_info(
+          "Skipping blocked frontier goal before dispatch: " + *cost_status +
+          "; " + describe_frontier(candidate_frontier));
+        continue;
+      }
     }
 
-    const auto cost_status = frontier_cost_status(std::optional<FrontierLike>{candidate_frontier});
-    if (!cost_status.has_value()) {
+    goal_pose = build_dispatch_goal_pose(
+      candidate_frontier,
+      current_pose,
+      bypass_min_distance_dispatch);
+    if (goal_pose.has_value()) {
       break;
     }
-
     callbacks.log_info(
-      "Skipping blocked frontier goal before dispatch: " + *cost_status +
-      "; " + describe_frontier(candidate_frontier));
+      "Skipping frontier with no footprint-safe dispatch point: " +
+      describe_frontier(candidate_frontier));
   }
 
-  if (dispatch_index >= frontier_sequence.size()) {
+  if (dispatch_index >= frontier_sequence.size() || !goal_pose.has_value()) {
     callbacks.log_info(
-      "All selected frontier goals are blocked before dispatch; waiting for updated costmap or frontier data");
+      "All selected frontier goals lack a safe dispatch point; waiting for updated costmap or frontier data");
     return false;
   }
 
@@ -932,32 +942,28 @@ bool FrontierExplorerCore::send_frontier_goal(
     dispatch_sequence.push_back(frontier_sequence[index]);
   }
 
-const auto goal_pose = build_dispatch_goal_pose(
-      dispatch_sequence.front(),
-    current_pose,
-    bypass_min_distance_dispatch);
   const auto selected_point = frontier_position(dispatch_sequence.front());
   if (
     std::hypot(
-      goal_pose.pose.position.x - selected_point.first,
-      goal_pose.pose.position.y - selected_point.second) > 0.05)
+      goal_pose->pose.position.x - selected_point.first,
+      goal_pose->pose.position.y - selected_point.second) > 0.05)
   {
     callbacks.log_info(
       "Using costmap-safe frontier standoff goal: frontier=(" +
       detail::format_meters(selected_point.first) + ", " +
       detail::format_meters(selected_point.second) + "), dispatch=(" +
-      detail::format_meters(goal_pose.pose.position.x) + ", " +
-      detail::format_meters(goal_pose.pose.position.y) + ")");
+      detail::format_meters(goal_pose->pose.position.x) + ", " +
+      detail::format_meters(goal_pose->pose.position.y) + ")");
   }
   if (debug_outputs_enabled()) {
-    callbacks.publish_selected_frontier_pose(goal_pose);
+    callbacks.publish_selected_frontier_pose(*goal_pose);
   }
   const std::string dispatch_description = dispatch_index == 0U ?
     description :
     "Sending frontier goal after blocked-goal skip: " + describe_frontier(dispatch_sequence.front());
   // Frontier mode dispatches only the first element from the selected sequence.
   return send_pose_goal(
-    goal_pose,
+    *goal_pose,
     "frontier",
     dispatch_sequence.front(),
     dispatch_sequence,

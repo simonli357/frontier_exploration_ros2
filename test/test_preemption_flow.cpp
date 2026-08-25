@@ -371,6 +371,7 @@ TEST(PreemptionFlowTests, DispatchSkipsBlockedFrontierAndUsesNextSequenceTarget)
   FrontierExplorerCore core(params, FrontierExplorerCoreCallbacks{});
   auto costmap_msg = build_grid(20, 20, 0);
   set_cell(costmap_msg, 1, 1, 60);
+  core.map = OccupancyGrid2d(build_grid(20, 20, 0));
   core.costmap = OccupancyGrid2d(costmap_msg);
 
   int dispatch_calls = 0;
@@ -523,6 +524,78 @@ TEST(PreemptionFlowTests, FrontierDispatchUsesCostmapSafeStandoffForFarTarget)
   ASSERT_TRUE(dispatched_request.has_value());
   EXPECT_NEAR(dispatched_request->goal_pose.pose.position.x, 8.5, 1e-9);
   EXPECT_NEAR(dispatched_request->goal_pose.pose.position.y, 5.5, 1e-9);
+}
+
+TEST(PreemptionFlowTests, FrontierDispatchRejectsUnsafeFallback)
+{
+  FrontierExplorerCoreParams params;
+  params.frontier_goal_standoff_m = 1.0;
+  params.frontier_goal_max_cost = 20;
+  params.frontier_goal_search_radius_m = 2.0;
+
+  FrontierExplorerCore core(params, FrontierExplorerCoreCallbacks{});
+  core.map = OccupancyGrid2d(build_grid(20, 20, 0));
+  core.costmap = OccupancyGrid2d(build_grid(20, 20, 80));
+
+  int dispatch_calls = 0;
+  core.callbacks.wait_for_action_server = [](double) {return true;};
+  core.callbacks.dispatch_goal_request = [&dispatch_calls](const GoalDispatchRequest &) {
+      dispatch_calls += 1;
+    };
+
+  EXPECT_FALSE(core.send_frontier_goal(
+    FrontierSequence{make_frontier(5.5, 5.5, 8)},
+    make_pose(0.5, 5.5),
+    "Sending frontier goal"));
+  EXPECT_EQ(dispatch_calls, 0);
+}
+
+TEST(PreemptionFlowTests, FrontierDispatchTriesNextCandidateWithSafeEndpoint)
+{
+  FrontierExplorerCoreParams params;
+  params.frontier_goal_standoff_m = 1.0;
+  params.frontier_goal_max_cost = 20;
+  params.frontier_goal_search_radius_m = 2.0;
+
+  FrontierExplorerCore core(params, FrontierExplorerCoreCallbacks{});
+  core.map = OccupancyGrid2d(build_grid(20, 20, 0));
+  auto costmap_msg = build_grid(20, 20, 80);
+  for (int y = 9; y <= 13; ++y) {
+    for (int x = 9; x <= 13; ++x) {
+      set_cell(costmap_msg, x, y, 0);
+    }
+  }
+  core.costmap = OccupancyGrid2d(costmap_msg);
+
+  int dispatch_calls = 0;
+  std::optional<GoalDispatchRequest> dispatched_request;
+  core.callbacks.wait_for_action_server = [](double) {return true;};
+  core.callbacks.dispatch_goal_request = [&dispatch_calls, &dispatched_request](
+    const GoalDispatchRequest & request) {
+      dispatch_calls += 1;
+      dispatched_request = request;
+    };
+
+  EXPECT_TRUE(core.send_frontier_goal(
+    FrontierSequence{
+      make_frontier(3.5, 3.5, 8),
+      make_frontier(11.5, 11.5, 8),
+    },
+    make_pose(0.5, 0.5),
+    "Sending frontier goal"));
+
+  ASSERT_EQ(dispatch_calls, 1);
+  ASSERT_TRUE(dispatched_request.has_value());
+  ASSERT_TRUE(dispatched_request->frontier.has_value());
+  EXPECT_NEAR(frontier_position(*dispatched_request->frontier).first, 11.5, 1e-9);
+  EXPECT_LE(
+    world_point_cost(
+      core.costmap,
+      {
+        dispatched_request->goal_pose.pose.position.x,
+        dispatched_request->goal_pose.pose.position.y,
+      }).value(),
+    params.frontier_goal_max_cost);
 }
 
 TEST(PreemptionFlowTests, EscapeModeRetriesWithoutMinDistanceFiltersAndBypassesDispatchAdjustment)

@@ -492,7 +492,7 @@ geometry_msgs::msg::PoseStamped FrontierExplorerCore::build_goal_pose(
   return goal_pose;
 }
 
-geometry_msgs::msg::PoseStamped FrontierExplorerCore::build_dispatch_goal_pose(
+std::optional<geometry_msgs::msg::PoseStamped> FrontierExplorerCore::build_dispatch_goal_pose(
   const FrontierLike & target_frontier,
   const geometry_msgs::msg::Pose & current_pose,
   bool bypass_min_distance_dispatch) const
@@ -512,34 +512,33 @@ geometry_msgs::msg::PoseStamped FrontierExplorerCore::build_dispatch_goal_pose(
       return goal_pose;
     };
 
-  const auto fallback_goal_pose = build_goal_pose(target_frontier, current_pose);
   const bool standoff_enabled = params.frontier_goal_standoff_m > 0.0;
-  if (bypass_min_distance_dispatch ||
-    (!standoff_enabled && params.frontier_selection_min_distance <= 0.0) ||
-    !map.has_value())
-  {
-    return fallback_goal_pose;
+  if (!map.has_value() || !costmap.has_value()) {
+    return std::nullopt;
   }
 
   const auto target_point = frontier_position(target_frontier);
-  const double distance_to_robot = std::hypot(
+  const double target_robot_distance = std::hypot(
     target_point.first - current_pose.position.x,
     target_point.second - current_pose.position.y);
-  if (!standoff_enabled && distance_to_robot >= params.frontier_selection_min_distance) {
-    return fallback_goal_pose;
-  }
-
-  const double target_clearance_m = standoff_enabled ?
-    params.frontier_goal_standoff_m : params.frontier_selection_min_distance;
+  const bool requires_min_distance_adjustment =
+    !bypass_min_distance_dispatch &&
+    !standoff_enabled &&
+    params.frontier_selection_min_distance > 0.0 &&
+    target_robot_distance < params.frontier_selection_min_distance;
+  const double target_clearance_m = bypass_min_distance_dispatch ? 0.0 :
+    (standoff_enabled ? params.frontier_goal_standoff_m :
+    (requires_min_distance_adjustment ? params.frontier_selection_min_distance : 0.0));
 
   int target_map_x = 0;
   int target_map_y = 0;
   if (!map->worldToMapNoThrow(target_point.first, target_point.second, target_map_x, target_map_y)) {
-    return fallback_goal_pose;
+    return std::nullopt;
   }
 
   const auto is_dispatch_cell_eligible =
-    [this, &current_pose, &target_point, target_clearance_m](int map_x, int map_y) {
+    [this, &current_pose, &target_point, target_clearance_m,
+    bypass_min_distance_dispatch](int map_x, int map_y) {
       if (map->getCost(map_x, map_y) != static_cast<int>(OccupancyGrid2d::CostValues::FreeSpace)) {
         return false;
       }
@@ -549,6 +548,7 @@ geometry_msgs::msg::PoseStamped FrontierExplorerCore::build_dispatch_goal_pose(
         world_point.first - current_pose.position.x,
         world_point.second - current_pose.position.y);
       if (
+        !bypass_min_distance_dispatch &&
         params.frontier_selection_min_distance > 0.0 &&
         robot_distance < params.frontier_selection_min_distance)
       {
@@ -563,20 +563,27 @@ geometry_msgs::msg::PoseStamped FrontierExplorerCore::build_dispatch_goal_pose(
       }
 
       const auto local_cost = world_point_cost(local_costmap, world_point);
-      if (local_cost.has_value() && *local_cost >= params.occ_threshold) {
+      if (local_cost.has_value() && *local_cost > params.frontier_goal_max_cost) {
         return false;
       }
 
       const auto global_cost = world_point_cost(costmap, world_point);
-      if (global_cost.has_value() && *global_cost >= params.occ_threshold) {
+      if (!global_cost.has_value() || *global_cost > params.frontier_goal_max_cost) {
         return false;
       }
 
       return true;
     };
 
-  const int max_radius = std::max(map->getSizeX(), map->getSizeY());
-  for (int radius = 0; radius < max_radius; ++radius) {
+  if (is_dispatch_cell_eligible(target_map_x, target_map_y) && target_clearance_m <= 0.0) {
+    return goal_pose_for_point(target_point);
+  }
+
+  const double resolution_m = static_cast<double>(map->map().info.resolution);
+  const int max_radius = std::max(
+    0,
+    static_cast<int>(std::ceil(params.frontier_goal_search_radius_m / resolution_m)));
+  for (int radius = 0; radius <= max_radius; ++radius) {
     std::optional<std::pair<double, double>> best_world_point;
     double best_target_distance_sq = std::numeric_limits<double>::infinity();
     double best_robot_distance_sq = std::numeric_limits<double>::infinity();
@@ -625,7 +632,7 @@ geometry_msgs::msg::PoseStamped FrontierExplorerCore::build_dispatch_goal_pose(
     }
   }
 
-  return fallback_goal_pose;
+  return std::nullopt;
 }
 
 std::vector<geometry_msgs::msg::PoseStamped> FrontierExplorerCore::build_goal_pose_sequence(

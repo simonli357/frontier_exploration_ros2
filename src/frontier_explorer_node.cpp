@@ -124,6 +124,8 @@ FrontierExplorerNode::FrontierExplorerNode(const rclcpp::NodeOptions & options)
   this->declare_parameter<double>("frontier_candidate_max_span_m", 0.0);
   this->declare_parameter<double>("frontier_selection_min_distance", 0.5);
   this->declare_parameter<double>("frontier_goal_standoff_m", 0.0);
+  this->declare_parameter<int>("frontier_goal_max_cost", 50);
+  this->declare_parameter<double>("frontier_goal_search_radius_m", 2.0);
   this->declare_parameter<bool>("escape_enabled", false);
   this->declare_parameter<double>("frontier_visit_tolerance", 0.30);
   this->declare_parameter<bool>("goal_preemption_enabled", false);
@@ -205,6 +207,13 @@ FrontierExplorerNode::FrontierExplorerNode(const rclcpp::NodeOptions & options)
   params_.frontier_goal_standoff_m = std::max(
     0.0,
     this->get_parameter("frontier_goal_standoff_m").as_double());
+  params_.frontier_goal_max_cost = std::clamp(
+    static_cast<int>(this->get_parameter("frontier_goal_max_cost").as_int()),
+    0,
+    100);
+  params_.frontier_goal_search_radius_m = std::max(
+    0.0,
+    this->get_parameter("frontier_goal_search_radius_m").as_double());
   params_.escape_enabled = this->get_parameter("escape_enabled").as_bool();
   params_.frontier_visit_tolerance = this->get_parameter("frontier_visit_tolerance").as_double();
   params_.goal_preemption_enabled = this->get_parameter(

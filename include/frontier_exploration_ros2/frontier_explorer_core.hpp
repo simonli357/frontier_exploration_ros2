@@ -92,6 +92,8 @@ struct FrontierExplorerCoreParams
   double frontier_candidate_max_span_m{0.0};
   double frontier_selection_min_distance{0.5};
   double frontier_goal_standoff_m{0.0};
+  int frontier_goal_max_cost{50};
+  double frontier_goal_search_radius_m{2.0};
   bool escape_enabled{false};
   double frontier_visit_tolerance{0.30};
   bool goal_preemption_enabled{false};
@@ -221,8 +223,8 @@ public:
     const FrontierLike & target_frontier,
     const geometry_msgs::msg::Pose & current_pose) const;
 
-  geometry_msgs::msg::PoseStamped build_dispatch_goal_pose(
-      const FrontierLike & target_frontier,
+  std::optional<geometry_msgs::msg::PoseStamped> build_dispatch_goal_pose(
+    const FrontierLike & target_frontier,
     const geometry_msgs::msg::Pose & current_pose,
     bool bypass_min_distance_dispatch = false) const;
 

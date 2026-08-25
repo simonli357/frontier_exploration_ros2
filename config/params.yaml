@@ -163,6 +163,8 @@ frontier_explorer:
 
     # Pull frontier navigation goals into known free space by this distance.
     frontier_goal_standoff_m: 0.0
+    frontier_goal_max_cost: 50
+    frontier_goal_search_radius_m: 2.0
 
     # Distance used to treat a frontier region as recently visited.
     # Use if you are having navigation loops.
