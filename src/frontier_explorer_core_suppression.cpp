@@ -151,13 +151,7 @@ bool FrontierExplorerCore::evaluate_active_goal_progress_timeout()
 void FrontierExplorerCore::handle_all_frontiers_suppressed(
   const geometry_msgs::msg::Pose & current_pose)
 {
-  if (
-    params.all_frontiers_suppressed_behavior == "stay" &&
-    params.completion_event_enabled)
-  {
-    callbacks.log_info(
-      "All reachable frontier candidates are suppressed; signaling supervised completion");
-    handle_exploration_complete(current_pose);
+  if (params.all_frontiers_suppressed_behavior == "stay") {
     return;
   }
 

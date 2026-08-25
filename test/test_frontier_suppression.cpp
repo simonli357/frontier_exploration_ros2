@@ -341,7 +341,7 @@ TEST(FrontierSuppressionCoreTests, AllSuppressedCanDispatchTemporaryReturnToStar
   EXPECT_FALSE(core.return_to_start_completed);
 }
 
-TEST(FrontierSuppressionCoreTests, AllSuppressedSignalsSupervisedCompletionWhenStaying)
+TEST(FrontierSuppressionCoreTests, AllSuppressedWaitsAndRetriesWhenStaying)
 {
   int64_t now_ns = 1'000'000'000;
   int dispatch_calls = 0;
@@ -351,6 +351,7 @@ TEST(FrontierSuppressionCoreTests, AllSuppressedSignalsSupervisedCompletionWhenS
   FrontierExplorerCoreParams params;
   params.frontier_suppression_enabled = true;
   params.frontier_suppression_attempt_threshold = 1;
+  params.frontier_suppression_timeout_s = 5.0;
   params.frontier_suppression_startup_grace_period_s = 0.0;
   params.all_frontiers_suppressed_behavior = "stay";
   params.return_to_start_on_complete = false;
@@ -401,16 +402,21 @@ TEST(FrontierSuppressionCoreTests, AllSuppressedSignalsSupervisedCompletionWhenS
   core.try_send_next_goal();
 
   EXPECT_EQ(dispatch_calls, 1);
-  EXPECT_EQ(completion_calls, 1);
+  EXPECT_EQ(completion_calls, 0);
   EXPECT_FALSE(core.return_to_start_completed);
-  EXPECT_NE(
-    std::find_if(
-      info_logs.begin(),
-      info_logs.end(),
-      [](const std::string & message) {
-        return message.find("signaling supervised completion") != std::string::npos;
-      }),
-    info_logs.end());
+  const bool completion_log_seen = std::any_of(
+    info_logs.begin(),
+    info_logs.end(),
+    [](const std::string & message) {
+      return message.find("signaling supervised completion") != std::string::npos;
+    });
+  EXPECT_FALSE(completion_log_seen);
+
+  now_ns += 6'000'000'000;
+  core.try_send_next_goal();
+
+  EXPECT_EQ(dispatch_calls, 2);
+  EXPECT_EQ(completion_calls, 0);
 }
 
 TEST(FrontierSuppressionCoreTests, TemporaryReturnToStartPreemptsWhenFrontiersBecomeAvailableAgain)
