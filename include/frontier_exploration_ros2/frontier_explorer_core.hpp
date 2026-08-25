@@ -89,6 +89,7 @@ struct FrontierExplorerCoreParams
   int occ_threshold{OCC_THRESHOLD};
   int min_frontier_size_cells{MIN_FRONTIER_SIZE};
   double frontier_candidate_min_goal_distance_m{0.0};
+  double frontier_candidate_max_span_m{0.0};
   double frontier_selection_min_distance{0.5};
   bool escape_enabled{false};
   double frontier_visit_tolerance{0.30};

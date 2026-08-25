@@ -75,6 +75,9 @@ FrontierExplorerCore::FrontierExplorerCore(
   params.frontier_candidate_min_goal_distance_m = std::max(
     0.0,
     params.frontier_candidate_min_goal_distance_m);
+  params.frontier_candidate_max_span_m = std::max(
+    0.0,
+    params.frontier_candidate_max_span_m);
   // Visible-gain geometry is clamped here so later preemption checks can assume valid ranges.
   params.goal_preemption_lidar_range_m = std::max(
     0.1,
@@ -189,6 +192,7 @@ FrontierSearchOptions FrontierExplorerCore::frontier_search_options() const
   options.occ_threshold = params.occ_threshold;
   options.min_frontier_size_cells = params.min_frontier_size_cells;
   options.candidate_min_goal_distance_m = params.frontier_candidate_min_goal_distance_m;
+  options.candidate_max_span_m = params.frontier_candidate_max_span_m;
   return options;
 }
 

@@ -240,6 +240,57 @@ TEST(FrontierSearchTests, FrontierChoiceDeterministicAcrossIdenticalRuns)
   }
 }
 
+TEST(FrontierSearchTests, LargeConnectedFrontierCanProduceSpatiallyDistinctCandidates)
+{
+  auto map_msg = build_grid(30, 30, -1);
+  std::vector<std::pair<int, int>> free_cells;
+  for (int x = 5; x < 25; ++x) {
+    for (int y = 5; y < 25; ++y) {
+      free_cells.emplace_back(x, y);
+    }
+  }
+  set_cells(map_msg, free_cells, 0);
+  const OccupancyGrid2d occupancy_map(map_msg);
+  const OccupancyGrid2d costmap(build_grid(30, 30, 0));
+
+  FrontierSearchOptions unsplit_options;
+  unsplit_options.min_frontier_size_cells = 2;
+  const auto unsplit = get_frontier(
+    make_pose(15.0, 15.0),
+    occupancy_map,
+    costmap,
+    std::nullopt,
+    0.0,
+    false,
+    unsplit_options);
+  ASSERT_EQ(unsplit.frontiers.size(), 1U);
+
+  FrontierSearchOptions split_options = unsplit_options;
+  split_options.candidate_max_span_m = 5.0;
+  const auto split = get_frontier(
+    make_pose(15.0, 15.0),
+    occupancy_map,
+    costmap,
+    std::nullopt,
+    0.0,
+    false,
+    split_options);
+
+  ASSERT_GT(split.frontiers.size(), 1U);
+  int split_cell_count = 0;
+  for (const auto & candidate : split.frontiers) {
+    EXPECT_GE(candidate.size, split_options.min_frontier_size_cells);
+    EXPECT_TRUE(candidate.goal_point.has_value());
+    split_cell_count += candidate.size;
+  }
+  EXPECT_EQ(split_cell_count, unsplit.frontiers.front().size);
+  for (std::size_t first = 0; first < split.frontiers.size(); ++first) {
+    for (std::size_t second = first + 1; second < split.frontiers.size(); ++second) {
+      EXPECT_NE(split.frontiers[first].goal_point, split.frontiers[second].goal_point);
+    }
+  }
+}
+
 TEST(FrontierSearchTests, DisconnectedFreeIslandIsNotSelected)
 {
   auto map_msg = build_grid(16, 10, -1);

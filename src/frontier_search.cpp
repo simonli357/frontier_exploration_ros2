@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <deque>
 #include <cstdint>
 #include <limits>
@@ -63,6 +64,80 @@ inline void set_classification(
 {
   // Monotonic set operation; flags are never toggled off inside one pass.
   point->classification |= classification_flag(classification);
+}
+
+using FrontierCluster = std::vector<FrontierPoint *>;
+
+void split_frontier_cluster(
+  FrontierCluster cluster,
+  int max_span_cells,
+  std::size_t min_cluster_size,
+  std::vector<FrontierCluster> & output)
+{
+  if (cluster.empty()) {
+    return;
+  }
+
+  int min_x = cluster.front()->mapX;
+  int max_x = min_x;
+  int min_y = cluster.front()->mapY;
+  int max_y = min_y;
+  for (const auto * point : cluster) {
+    min_x = std::min(min_x, point->mapX);
+    max_x = std::max(max_x, point->mapX);
+    min_y = std::min(min_y, point->mapY);
+    max_y = std::max(max_y, point->mapY);
+  }
+
+  const int span_x = max_x - min_x;
+  const int span_y = max_y - min_y;
+  if (
+    max_span_cells <= 0 || std::max(span_x, span_y) <= max_span_cells ||
+    cluster.size() < 2U * min_cluster_size)
+  {
+    output.push_back(std::move(cluster));
+    return;
+  }
+
+  const bool split_x = span_x >= span_y;
+  std::sort(
+    cluster.begin(), cluster.end(),
+    [split_x](const FrontierPoint * lhs, const FrontierPoint * rhs) {
+      const auto lhs_key = split_x ?
+        std::pair<int, int>{lhs->mapX, lhs->mapY} :
+        std::pair<int, int>{lhs->mapY, lhs->mapX};
+      const auto rhs_key = split_x ?
+        std::pair<int, int>{rhs->mapX, rhs->mapY} :
+        std::pair<int, int>{rhs->mapY, rhs->mapX};
+      return lhs_key < rhs_key;
+    });
+
+  const auto midpoint = cluster.begin() + static_cast<std::ptrdiff_t>(cluster.size() / 2U);
+  FrontierCluster lower(cluster.begin(), midpoint);
+  FrontierCluster upper(midpoint, cluster.end());
+  split_frontier_cluster(std::move(lower), max_span_cells, min_cluster_size, output);
+  split_frontier_cluster(std::move(upper), max_span_cells, min_cluster_size, output);
+}
+
+std::vector<FrontierCluster> partition_frontier_cluster(
+  const FrontierCluster & cluster,
+  double resolution_m,
+  const FrontierSearchOptions & options)
+{
+  if (options.candidate_max_span_m <= 0.0 || resolution_m <= 0.0) {
+    return {cluster};
+  }
+
+  const int max_span_cells = std::max(
+    1,
+    static_cast<int>(std::ceil(options.candidate_max_span_m / resolution_m)));
+  std::vector<FrontierCluster> partitions;
+  split_frontier_cluster(
+    cluster,
+    max_span_cells,
+    static_cast<std::size_t>(std::max(1, options.min_frontier_size_cells)),
+    partitions);
+  return partitions;
 }
 
 template<typename Fn>
@@ -665,7 +740,7 @@ FrontierSearchResult get_frontier(
       continue;
     }
 
-      if (is_frontier_point(
+    if (is_frontier_point(
         point,
         occupancy_map,
         costmap,
@@ -675,7 +750,6 @@ FrontierSearchResult get_frontier(
     {
       // Collect one connected frontier cluster.
       set_classification(point, PointClassification::FrontierOpen);
-      const std::pair<int, int> frontier_start{point->mapX, point->mapY};
       std::deque<FrontierPoint *> frontier_queue;
       frontier_queue.push_back(point);
       std::vector<FrontierPoint *> new_frontier;
@@ -728,21 +802,32 @@ FrontierSearchResult get_frontier(
         set_classification(frontier_point, PointClassification::MapClosed);
       }
 
-      const auto frontier_candidate = build_frontier_candidate(
+      const auto frontier_partitions = partition_frontier_cluster(
         new_frontier,
-        frontier_start,
-        occupancy_map,
-        costmap,
-        local_costmap,
-        frontier_cache,
-        current_pose,
-        min_goal_distance,
-        options,
-        &search_context);
+        resolution_m,
+        options);
+      for (const auto & frontier_partition : frontier_partitions) {
+        const std::pair<int, int> partition_start{
+          frontier_partition.front()->mapX,
+          frontier_partition.front()->mapY,
+        };
+        const auto frontier_candidate = build_frontier_candidate(
+          frontier_partition,
+          partition_start,
+          occupancy_map,
+          costmap,
+          local_costmap,
+          frontier_cache,
+          current_pose,
+          min_goal_distance,
+          options,
+          &search_context);
 
-      if (frontier_candidate.has_value()) {
-        // Preserve discovery order to keep output deterministic for downstream policy.
-        frontiers.push_back(*frontier_candidate);
+        if (frontier_candidate.has_value()) {
+          // Spatial partitioning is deterministic, so downstream route ordering
+          // receives a stable candidate sequence.
+          frontiers.push_back(*frontier_candidate);
+        }
       }
     }
 

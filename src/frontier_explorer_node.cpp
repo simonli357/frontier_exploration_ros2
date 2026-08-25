@@ -120,6 +120,7 @@ FrontierExplorerNode::FrontierExplorerNode(const rclcpp::NodeOptions & options)
   this->declare_parameter<int>("occ_threshold", 50);
   this->declare_parameter<int>("min_frontier_size_cells", 5);
   this->declare_parameter<double>("frontier_candidate_min_goal_distance_m", 0.0);
+  this->declare_parameter<double>("frontier_candidate_max_span_m", 0.0);
   this->declare_parameter<double>("frontier_selection_min_distance", 0.5);
   this->declare_parameter<bool>("escape_enabled", false);
   this->declare_parameter<double>("frontier_visit_tolerance", 0.30);
@@ -193,6 +194,8 @@ FrontierExplorerNode::FrontierExplorerNode(const rclcpp::NodeOptions & options)
   params_.min_frontier_size_cells = this->get_parameter("min_frontier_size_cells").as_int();
   params_.frontier_candidate_min_goal_distance_m = this->get_parameter(
     "frontier_candidate_min_goal_distance_m").as_double();
+  params_.frontier_candidate_max_span_m = this->get_parameter(
+    "frontier_candidate_max_span_m").as_double();
   params_.frontier_selection_min_distance = this->get_parameter(
     "frontier_selection_min_distance").as_double();
   params_.escape_enabled = this->get_parameter("escape_enabled").as_bool();
@@ -364,7 +367,7 @@ FrontierExplorerNode::FrontierExplorerNode(const rclcpp::NodeOptions & options)
     params_.navigate_to_pose_action_name.c_str());
   RCLCPP_INFO(
     this->get_logger(),
-    "Decision-map config: optimization=%s, sigma_s=%.2f, sigma_r=%.2f, dilation_radius=%d, occ_threshold=%d, min_frontier_size_cells=%d, frontier_candidate_min_goal_distance_m=%.2f, debug_outputs=%s",
+    "Decision-map config: optimization=%s, sigma_s=%.2f, sigma_r=%.2f, dilation_radius=%d, occ_threshold=%d, min_frontier_size_cells=%d, frontier_candidate_min_goal_distance_m=%.2f, frontier_candidate_max_span_m=%.2f, debug_outputs=%s",
     frontierMapOptimizationEnabled() ? "true" : "false",
     params_.sigma_s,
     params_.sigma_r,
@@ -372,6 +375,7 @@ FrontierExplorerNode::FrontierExplorerNode(const rclcpp::NodeOptions & options)
     params_.occ_threshold,
     params_.min_frontier_size_cells,
     params_.frontier_candidate_min_goal_distance_m,
+    params_.frontier_candidate_max_span_m,
     debugOutputsEnabled() ? "debug-log-level" : "disabled");
   RCLCPP_INFO(
     this->get_logger(),
