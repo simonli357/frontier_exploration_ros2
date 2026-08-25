@@ -615,7 +615,7 @@ TEST(PreemptionFlowTests, FrontierCostStatusUsesConfiguredOccupancyThreshold)
   EXPECT_TRUE(core.frontier_cost_status(target).has_value());
 }
 
-TEST(PreemptionFlowTests, PreemptionCancelsActiveGoalAndDefersReselectionWhenSettleEnabled)
+TEST(PreemptionFlowTests, PreemptionReplacesActiveGoalWithoutSettleGap)
 {
   std::vector<std::string> info_logs;
   FrontierExplorerCoreParams params;
@@ -682,8 +682,8 @@ TEST(PreemptionFlowTests, PreemptionCancelsActiveGoalAndDefersReselectionWhenSet
 
   core.consider_preempt_active_goal("map");
 
-  EXPECT_EQ(dispatch_calls, 0);
-  EXPECT_EQ(fake_handle->cancel_calls, 1);
+  EXPECT_EQ(dispatch_calls, 1);
+  EXPECT_EQ(fake_handle->cancel_calls, 0);
   EXPECT_TRUE(core.pending_frontier_sequence.empty());
   EXPECT_FALSE(core.awaiting_map_refresh);
   EXPECT_FALSE(core.post_goal_settle_active);
@@ -895,7 +895,7 @@ TEST(PreemptionFlowTests, VisibleGainGateSkipsSmallClusterEvenBelowMinRevealThre
   EXPECT_TRUE(core->pending_frontier_sequence.empty());
 }
 
-TEST(PreemptionFlowTests, VisibleGainExhaustionCancelsAndDefersSnapshotReselection)
+TEST(PreemptionFlowTests, VisibleGainExhaustionReselectsDifferentFrontierWithoutCancel)
 {
   auto core = make_preemption_core();
   auto fake_handle = std::make_shared<FakeGoalHandle>();
@@ -936,13 +936,13 @@ TEST(PreemptionFlowTests, VisibleGainExhaustionCancelsAndDefersSnapshotReselecti
 
   core->consider_preempt_active_goal("map");
 
-  EXPECT_EQ(frontier_search_calls, 0);
-  EXPECT_EQ(dispatch_calls, 0);
-  EXPECT_EQ(fake_handle->cancel_calls, 1);
+  EXPECT_EQ(frontier_search_calls, 1);
+  EXPECT_EQ(dispatch_calls, 1);
+  EXPECT_EQ(fake_handle->cancel_calls, 0);
   EXPECT_TRUE(core->pending_frontier_sequence.empty());
 }
 
-TEST(PreemptionFlowTests, LowGainPreemptionCancelsWithoutSnapshotReselection)
+TEST(PreemptionFlowTests, LowGainKeepsEquivalentActiveFrontier)
 {
   auto core = make_preemption_core();
   auto fake_handle = std::make_shared<FakeGoalHandle>();
@@ -980,8 +980,51 @@ TEST(PreemptionFlowTests, LowGainPreemptionCancelsWithoutSnapshotReselection)
 
   core->consider_preempt_active_goal("map");
 
-  EXPECT_EQ(frontier_search_calls, 0);
-  EXPECT_EQ(fake_handle->cancel_calls, 1);
+  EXPECT_EQ(frontier_search_calls, 1);
+  EXPECT_EQ(fake_handle->cancel_calls, 0);
+  EXPECT_TRUE(core->pending_frontier_sequence.empty());
+}
+
+TEST(PreemptionFlowTests, LowGainKeepsSameDispatchTargetWhenLaterSequenceChanges)
+{
+  auto core = make_preemption_core();
+  auto fake_handle = std::make_shared<FakeGoalHandle>();
+  core->goal_handle = fake_handle;
+  core->params.goal_preemption_enabled = true;
+  core->params.goal_preemption_lidar_range_m = 4.0;
+  core->params.goal_preemption_lidar_fov_deg = 90.0;
+  core->params.goal_preemption_lidar_ray_step_deg = 1.0;
+  core->params.goal_preemption_lidar_min_reveal_length_m = 0.5;
+  core->replacement_required_hits = 1;
+
+  const FrontierCandidate active_frontier{{4.0, 5.0}, {3.0, 5.0}, 8};
+  core->active_goal_frontier = active_frontier;
+  core->active_goal_frontiers = {active_frontier, make_frontier(7.0, 7.0)};
+  core->map = OccupancyGrid2d(build_grid(12, 12, 0));
+
+  int dispatch_calls = 0;
+  core->callbacks.wait_for_action_server = [](double) {return true;};
+  core->callbacks.dispatch_goal_request = [&dispatch_calls](const GoalDispatchRequest &) {
+      dispatch_calls += 1;
+    };
+  core->callbacks.frontier_search = [active_frontier](
+    const geometry_msgs::msg::Pose &,
+    const OccupancyGrid2d &,
+    const OccupancyGrid2d &,
+    const std::optional<OccupancyGrid2d> &,
+    double,
+    bool)
+    {
+      FrontierSearchResult result;
+      result.frontiers = {active_frontier, make_frontier(9.0, 9.0)};
+      result.robot_map_cell = {0, 0};
+      return result;
+    };
+
+  core->consider_preempt_active_goal("map");
+
+  EXPECT_EQ(dispatch_calls, 0);
+  EXPECT_EQ(fake_handle->cancel_calls, 0);
   EXPECT_TRUE(core->pending_frontier_sequence.empty());
 }
 

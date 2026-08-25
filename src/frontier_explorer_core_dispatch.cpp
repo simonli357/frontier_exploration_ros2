@@ -552,17 +552,6 @@ if (!active_goal_cost_status.has_value()) {
   }
   if (visible_reveal_gain_exhausted) {
     last_low_gain_reselection_time_ns = now_ns;
-
-    const std::string visible_gain_preemption_reason =
-    visible_reveal_length.has_value() ?
-    "active frontier visible reveal gain exhausted at target pose (visible=" +
-    detail::format_meters(*visible_reveal_length) + ", required=" +
-    detail::format_meters(params.goal_preemption_lidar_min_reveal_length_m) +
-    "); canceling active goal and deferring frontier reselection until the next map refresh" :
-    "active frontier visible reveal gain could not be evaluated; canceling active goal and deferring frontier reselection until the next map refresh";
-
-  request_active_goal_cancel(visible_gain_preemption_reason);
-  return;
   }
 
   // THIS PART MIGHT BE PROBLEMATIC FOR CPU USAGE
@@ -626,8 +615,13 @@ if (!active_goal_cost_status.has_value()) {
     return;
   }
 
-  if (are_frontier_sequences_equivalent(frontier_sequence, active_goal_frontiers)) {
-    // Replacement candidate is effectively same as active target.
+  if (
+    (!active_goal_cost_status.has_value() &&
+    are_frontiers_equivalent(active_goal_frontier, frontier_sequence.front())) ||
+    are_frontier_sequences_equivalent(frontier_sequence, active_goal_frontiers))
+  {
+    // Later MRTSP candidates may change as the map grows. Keep the active action when its
+    // immediate dispatch target is unchanged so progress tracking is not reset by churn.
     reset_replacement_candidate_tracking();
     return;
   }
