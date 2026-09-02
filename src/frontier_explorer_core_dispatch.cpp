@@ -162,6 +162,9 @@ void FrontierExplorerCore::try_send_next_goal()
       callbacks.log_info(
         "No reachable frontier candidate is available right now; waiting for a map update");
       no_reachable_frontier_reported = true;
+      if (params.completion_event_enabled) {
+        callbacks.on_exploration_complete();
+      }
     }
     return;
   }
@@ -933,6 +936,9 @@ bool FrontierExplorerCore::send_frontier_goal(
   if (dispatch_index >= frontier_sequence.size() || !goal_pose.has_value()) {
     callbacks.log_info(
       "All selected frontier goals lack a safe dispatch point; waiting for updated costmap or frontier data");
+    if (params.completion_event_enabled) {
+      callbacks.on_exploration_complete();
+    }
     return false;
   }
 
