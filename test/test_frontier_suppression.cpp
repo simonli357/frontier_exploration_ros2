@@ -485,11 +485,20 @@ TEST(FrontierSuppressionCoreTests, TemporaryReturnToStartPreemptsWhenFrontiersBe
 
   use_suppressed_frontier = false;
   core.occupancyGridCallback(OccupancyGrid2d(map_msg));
-  EXPECT_EQ(fake_handle->cancel_calls, 0);
-  EXPECT_TRUE(core.pending_frontier_sequence.empty());
+  EXPECT_EQ(fake_handle->cancel_calls, 1);
+  EXPECT_FALSE(core.pending_frontier_sequence.empty());
+  EXPECT_EQ(dispatch_calls, 2);
 
+  fake_handle->resolve_cancel();
+  core.get_result_callback(
+    core.current_dispatch_id,
+    action_msgs::msg::GoalStatus::STATUS_CANCELED,
+    0,
+    "",
+    "");
   ASSERT_EQ(dispatch_calls, 3);
   EXPECT_EQ(dispatched_goal_kinds.back(), "frontier");
+  EXPECT_TRUE(core.pending_frontier_sequence.empty());
 }
 
 TEST(FrontierSuppressionCoreTests, StartupGracePeriodDefersSuppressionFailures)

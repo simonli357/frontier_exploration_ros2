@@ -236,7 +236,8 @@ void FrontierExplorerCore::consider_cancel_suppressed_return_to_start()
   suppressed_return_to_start_started = false;
   callbacks.log_info(
     "Frontiers are available again; preempting temporary return-to-start goal");
-  dispatch_pending_frontier_goal(*current_pose);
+  request_active_goal_cancel(
+    "Frontiers are available again; canceling temporary return-to-start goal");
 }
 
 }  // namespace frontier_exploration_ros2
