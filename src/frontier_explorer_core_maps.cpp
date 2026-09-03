@@ -103,6 +103,7 @@ void FrontierExplorerCore::ingestRawMapUpdate(const OccupancyGrid2d & map_msg)
   map = map_msg;
   map_generation += 1;
   decision_map_dirty = true;
+  awaiting_costmap_after_map_update = true;
 }
 
 bool FrontierExplorerCore::active_frontier_goal_in_progress() const
@@ -189,6 +190,11 @@ void FrontierExplorerCore::occupancyGridCallback(const OccupancyGrid2d & map_msg
 
 void FrontierExplorerCore::costmapCallback(const OccupancyGrid2d & map_msg)
 {
+  // Frontier reachability must use the global costmap generated after the
+  // latest occupancy map. Otherwise a growing map can produce a goal that
+  // Navfn rejects as soon as its static layer catches up.
+  awaiting_costmap_after_map_update = false;
+
   if (active_frontier_goal_in_progress()) {
     costmap = map_msg;
     pending_costmap_search_input_update = true;

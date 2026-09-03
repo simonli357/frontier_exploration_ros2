@@ -139,7 +139,7 @@ std::unique_ptr<FrontierExplorerCore> make_preemption_core(std::vector<std::stri
 }
 
 // Replacement and cancellation policy behavior.
-TEST(PreemptionFlowTests, ReselectionReplacementDispatchesWithoutCancel)
+TEST(PreemptionFlowTests, ReselectionReplacementCancelsBeforeDispatch)
 {
   std::vector<std::string> info_logs;
   auto core = make_preemption_core(&info_logs);
@@ -156,8 +156,16 @@ TEST(PreemptionFlowTests, ReselectionReplacementDispatchesWithoutCancel)
   core->request_frontier_reselection(frontier_sequence, make_pose(), "mrtsp", "replacement");
   core->request_frontier_reselection(frontier_sequence, make_pose(), "mrtsp", "replacement");
 
+  EXPECT_EQ(dispatch_calls, 0);
+  EXPECT_EQ(fake_handle->cancel_calls, 1);
+  EXPECT_FALSE(core->pending_frontier_sequence.empty());
+
+  fake_handle->resolve_cancel();
+  core->get_result_callback(
+    1, action_msgs::msg::GoalStatus::STATUS_CANCELED, 0, "", "");
+
   EXPECT_EQ(dispatch_calls, 1);
-  EXPECT_EQ(fake_handle->cancel_calls, 0);
+  EXPECT_TRUE(core->pending_frontier_sequence.empty());
 }
 
 TEST(PreemptionFlowTests, ThrottledMapProcessingCoalescesMultipleRawUpdatesIntoSingleProcessedRefresh)
@@ -206,6 +214,8 @@ TEST(PreemptionFlowTests, ThrottledMapProcessingCoalescesMultipleRawUpdatesIntoS
   core.ingestRawMapUpdate(OccupancyGrid2d(build_grid(20, 20, 0)));
   core.ingestRawMapUpdate(OccupancyGrid2d(build_grid(20, 20, 0)));
   ASSERT_TRUE(core.decision_map_dirty);
+
+  core.costmapCallback(OccupancyGrid2d(costmap_msg));
 
   core.processPendingMapUpdate();
 
@@ -277,8 +287,15 @@ TEST(PreemptionFlowTests, ReplacementDebounceTracksSelectedFrontierOnly)
   core->request_frontier_reselection(first_sequence, make_pose(), "mrtsp", "replacement");
   core->request_frontier_reselection(second_sequence, make_pose(), "mrtsp", "replacement");
 
+  EXPECT_EQ(dispatch_calls, 0);
+  EXPECT_EQ(fake_handle->cancel_calls, 1);
+
+  fake_handle->resolve_cancel();
+  core->get_result_callback(
+    1, action_msgs::msg::GoalStatus::STATUS_CANCELED, 0, "", "");
+
   EXPECT_EQ(dispatch_calls, 1);
-  EXPECT_EQ(fake_handle->cancel_calls, 0);
+  EXPECT_TRUE(core->pending_frontier_sequence.empty());
 }
 
 TEST(PreemptionFlowTests, BlockedGoalWithoutReplacementUsesExplicitCancel)
@@ -350,7 +367,8 @@ TEST(PreemptionFlowTests, BlockedGoalReplacementLogsSkipVerb)
 
   core->consider_preempt_active_goal("map");
 
-  EXPECT_EQ(dispatch_calls, 1);
+  EXPECT_EQ(dispatch_calls, 0);
+  EXPECT_EQ(fake_handle->cancel_calls, 1);
   ASSERT_FALSE(info_logs.empty());
   bool found_skip_log = false;
   for (const auto & message : info_logs) {
@@ -360,6 +378,11 @@ TEST(PreemptionFlowTests, BlockedGoalReplacementLogsSkipVerb)
     }
   }
   EXPECT_TRUE(found_skip_log);
+
+  fake_handle->resolve_cancel();
+  core->get_result_callback(
+    1, action_msgs::msg::GoalStatus::STATUS_CANCELED, 0, "", "");
+  EXPECT_EQ(dispatch_calls, 1);
 }
 
 TEST(PreemptionFlowTests, DispatchSkipsBlockedFrontierAndUsesNextSequenceTarget)
@@ -410,6 +433,7 @@ TEST(PreemptionFlowTests, MrtspDispatchAdjustsCloseTargetToClosestFarEnoughFreeP
   auto map_msg = build_grid(20, 20, 0);
   auto costmap_msg = build_grid(20, 20, 100);
   set_cell(costmap_msg, 5, 5, 0);
+  set_cell(costmap_msg, 6, 5, 0);
   set_cell(costmap_msg, 7, 5, 0);
   core.map = OccupancyGrid2d(map_msg);
   core.costmap = OccupancyGrid2d(costmap_msg);
@@ -451,6 +475,8 @@ TEST(PreemptionFlowTests, MrtspDispatchSkipsReplacementPointsThatRemainTooCloseT
   auto map_msg = build_grid(20, 20, 0);
   auto costmap_msg = build_grid(20, 20, 100);
   set_cell(costmap_msg, 4, 3, 0);
+  set_cell(costmap_msg, 5, 5, 0);
+  set_cell(costmap_msg, 6, 5, 0);
   set_cell(costmap_msg, 7, 5, 0);
   core.map = OccupancyGrid2d(map_msg);
   core.costmap = OccupancyGrid2d(costmap_msg);
@@ -532,6 +558,7 @@ TEST(PreemptionFlowTests, FrontierDispatchRejectsUnsafeFallback)
   params.frontier_goal_standoff_m = 1.0;
   params.frontier_goal_max_cost = 20;
   params.frontier_goal_search_radius_m = 2.0;
+  params.occ_threshold = 98;
 
   FrontierExplorerCore core(params, FrontierExplorerCoreCallbacks{});
   core.map = OccupancyGrid2d(build_grid(20, 20, 0));
@@ -556,6 +583,7 @@ TEST(PreemptionFlowTests, FrontierDispatchTriesNextCandidateWithSafeEndpoint)
   params.frontier_goal_standoff_m = 1.0;
   params.frontier_goal_max_cost = 20;
   params.frontier_goal_search_radius_m = 2.0;
+  params.occ_threshold = 98;
 
   FrontierExplorerCore core(params, FrontierExplorerCoreCallbacks{});
   core.map = OccupancyGrid2d(build_grid(20, 20, 0));
@@ -731,7 +759,7 @@ TEST(PreemptionFlowTests, FrontierCostStatusUsesConfiguredOccupancyThreshold)
   EXPECT_TRUE(core.frontier_cost_status(target).has_value());
 }
 
-TEST(PreemptionFlowTests, PreemptionReplacesActiveGoalWithoutSettleGap)
+TEST(PreemptionFlowTests, PreemptionSerializesReplacementWithoutSettleGap)
 {
   std::vector<std::string> info_logs;
   FrontierExplorerCoreParams params;
@@ -798,10 +826,18 @@ TEST(PreemptionFlowTests, PreemptionReplacesActiveGoalWithoutSettleGap)
 
   core.consider_preempt_active_goal("map");
 
-  EXPECT_EQ(dispatch_calls, 1);
-  EXPECT_EQ(fake_handle->cancel_calls, 0);
-  EXPECT_TRUE(core.pending_frontier_sequence.empty());
+  EXPECT_EQ(dispatch_calls, 0);
+  EXPECT_EQ(fake_handle->cancel_calls, 1);
+  EXPECT_FALSE(core.pending_frontier_sequence.empty());
   EXPECT_FALSE(core.awaiting_map_refresh);
+  EXPECT_FALSE(core.post_goal_settle_active);
+
+  fake_handle->resolve_cancel();
+  core.get_result_callback(
+    1, action_msgs::msg::GoalStatus::STATUS_CANCELED, 0, "", "");
+
+  EXPECT_EQ(dispatch_calls, 1);
+  EXPECT_TRUE(core.pending_frontier_sequence.empty());
   EXPECT_FALSE(core.post_goal_settle_active);
 }
 
@@ -1011,7 +1047,7 @@ TEST(PreemptionFlowTests, VisibleGainGateSkipsSmallClusterEvenBelowMinRevealThre
   EXPECT_TRUE(core->pending_frontier_sequence.empty());
 }
 
-TEST(PreemptionFlowTests, VisibleGainExhaustionReselectsDifferentFrontierWithoutCancel)
+TEST(PreemptionFlowTests, VisibleGainExhaustionSerializesDifferentFrontier)
 {
   auto core = make_preemption_core();
   auto fake_handle = std::make_shared<FakeGoalHandle>();
@@ -1053,8 +1089,15 @@ TEST(PreemptionFlowTests, VisibleGainExhaustionReselectsDifferentFrontierWithout
   core->consider_preempt_active_goal("map");
 
   EXPECT_EQ(frontier_search_calls, 1);
+  EXPECT_EQ(dispatch_calls, 0);
+  EXPECT_EQ(fake_handle->cancel_calls, 1);
+  EXPECT_FALSE(core->pending_frontier_sequence.empty());
+
+  fake_handle->resolve_cancel();
+  core->get_result_callback(
+    1, action_msgs::msg::GoalStatus::STATUS_CANCELED, 0, "", "");
+
   EXPECT_EQ(dispatch_calls, 1);
-  EXPECT_EQ(fake_handle->cancel_calls, 0);
   EXPECT_TRUE(core->pending_frontier_sequence.empty());
 }
 

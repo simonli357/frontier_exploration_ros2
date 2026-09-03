@@ -434,6 +434,7 @@ public:
   bool post_goal_settle_active{false};
   std::optional<int64_t> post_goal_settle_started_at_ns;
   bool decision_map_dirty{false};
+  bool awaiting_costmap_after_map_update{false};
   bool pending_costmap_search_input_update{false};
   bool pending_local_costmap_search_input_update{false}; 
 

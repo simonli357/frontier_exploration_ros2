@@ -402,7 +402,7 @@ TEST(FrontierSuppressionCoreTests, AllSuppressedWaitsAndRetriesWhenStaying)
   core.try_send_next_goal();
 
   EXPECT_EQ(dispatch_calls, 1);
-  EXPECT_EQ(completion_calls, 1);
+  EXPECT_EQ(completion_calls, 0);
   EXPECT_FALSE(core.return_to_start_completed);
   const bool completion_log_seen = std::any_of(
     info_logs.begin(),
@@ -416,7 +416,7 @@ TEST(FrontierSuppressionCoreTests, AllSuppressedWaitsAndRetriesWhenStaying)
   core.try_send_next_goal();
 
   EXPECT_EQ(dispatch_calls, 2);
-  EXPECT_EQ(completion_calls, 1);
+  EXPECT_EQ(completion_calls, 0);
 }
 
 TEST(FrontierSuppressionCoreTests, TemporaryReturnToStartPreemptsWhenFrontiersBecomeAvailableAgain)

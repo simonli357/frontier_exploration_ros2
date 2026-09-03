@@ -21,12 +21,87 @@ limitations under the License.
 
 #include <chrono>
 #include <cmath>
+#include <deque>
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
+#include <vector>
 
 namespace frontier_exploration_ros2
 {
+
+namespace
+{
+
+std::vector<uint8_t> reachable_dispatch_cells(
+  const OccupancyGrid2d & map,
+  const OccupancyGrid2d & costmap,
+  const geometry_msgs::msg::Pose & current_pose,
+  int blocked_cost_threshold)
+{
+  const int width = map.getSizeX();
+  const int height = map.getSizeY();
+  std::vector<uint8_t> reachable(
+    static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0U);
+
+  int start_x = 0;
+  int start_y = 0;
+  if (!map.worldToMapNoThrow(
+      current_pose.position.x, current_pose.position.y, start_x, start_y))
+  {
+    return reachable;
+  }
+
+  const auto traversable = [&map, &costmap, blocked_cost_threshold](int map_x, int map_y) {
+      if (map.getCost(map_x, map_y) !=
+        static_cast<int>(OccupancyGrid2d::CostValues::FreeSpace))
+      {
+        return false;
+      }
+      const auto world_point = map.mapToWorld(map_x, map_y);
+      int cost_x = 0;
+      int cost_y = 0;
+      return costmap.worldToMapNoThrow(
+        world_point.first, world_point.second, cost_x, cost_y) &&
+             costmap.getCost(cost_x, cost_y) < blocked_cost_threshold;
+    };
+
+  if (!traversable(start_x, start_y)) {
+    return reachable;
+  }
+
+  const auto index = [width](int map_x, int map_y) {
+      return static_cast<std::size_t>(map_y) * static_cast<std::size_t>(width) +
+             static_cast<std::size_t>(map_x);
+    };
+  std::deque<std::pair<int, int>> pending;
+  reachable[index(start_x, start_y)] = 1U;
+  pending.emplace_back(start_x, start_y);
+  constexpr int offsets[4][2] = {{-1, 0}, {0, -1}, {0, 1}, {1, 0}};
+  while (!pending.empty()) {
+    const auto [map_x, map_y] = pending.front();
+    pending.pop_front();
+    for (const auto & offset : offsets) {
+      const int neighbor_x = map_x + offset[0];
+      const int neighbor_y = map_y + offset[1];
+      if (
+        neighbor_x < 0 || neighbor_y < 0 ||
+        neighbor_x >= width || neighbor_y >= height)
+      {
+        continue;
+      }
+      const std::size_t neighbor_index = index(neighbor_x, neighbor_y);
+      if (reachable[neighbor_index] != 0U || !traversable(neighbor_x, neighbor_y)) {
+        continue;
+      }
+      reachable[neighbor_index] = 1U;
+      pending.emplace_back(neighbor_x, neighbor_y);
+    }
+  }
+  return reachable;
+}
+
+}  // namespace
 
 FrontierSequence FrontierExplorerCore::build_mrtsp_frontier_sequence(
   const FrontierSequence & frontiers,
@@ -518,6 +593,9 @@ std::optional<geometry_msgs::msg::PoseStamped> FrontierExplorerCore::build_dispa
   }
 
   const auto target_point = frontier_position(target_frontier);
+  const auto reachable_cells = reachable_dispatch_cells(
+    *map, *costmap, current_pose, params.occ_threshold);
+  const int map_width = map->getSizeX();
   const double target_robot_distance = std::hypot(
     target_point.first - current_pose.position.x,
     target_point.second - current_pose.position.y);
@@ -538,7 +616,13 @@ std::optional<geometry_msgs::msg::PoseStamped> FrontierExplorerCore::build_dispa
 
   const auto is_dispatch_cell_eligible =
     [this, &current_pose, &target_point, target_clearance_m,
-    bypass_min_distance_dispatch](int map_x, int map_y) {
+    bypass_min_distance_dispatch, &reachable_cells, map_width](int map_x, int map_y) {
+      const std::size_t cell_index =
+        static_cast<std::size_t>(map_y) * static_cast<std::size_t>(map_width) +
+        static_cast<std::size_t>(map_x);
+      if (cell_index >= reachable_cells.size() || reachable_cells[cell_index] == 0U) {
+        return false;
+      }
       if (map->getCost(map_x, map_y) != static_cast<int>(OccupancyGrid2d::CostValues::FreeSpace)) {
         return false;
       }

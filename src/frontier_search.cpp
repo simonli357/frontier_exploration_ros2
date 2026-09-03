@@ -44,6 +44,15 @@ constexpr int kNeighborOffsets[9][2] = {
   {1, 1},
 };
 
+// Navfn expands through cardinal neighbors. Use the same topology when
+// deciding whether a frontier endpoint is connected to the robot.
+constexpr int kCardinalNeighborOffsets[4][2] = {
+  {-1, 0},
+  {0, -1},
+  {0, 1},
+  {1, 0},
+};
+
 constexpr int classification_flag(PointClassification classification) noexcept
 {
   // Enum values are bit-flags; convert once for branch-friendly bit operations.
@@ -151,6 +160,25 @@ void for_each_neighbor(
   const int size_x = occupancy_map.getSizeX();
   const int size_y = occupancy_map.getSizeY();
   for (const auto & offset : kNeighborOffsets) {
+    const int x = point->mapX + offset[0];
+    const int y = point->mapY + offset[1];
+    if (x < 0 || y < 0 || x >= size_x || y >= size_y) {
+      continue;
+    }
+    fn(frontier_cache.getPoint(x, y));
+  }
+}
+
+template<typename Fn>
+void for_each_cardinal_neighbor(
+  FrontierPoint * point,
+  const OccupancyGrid2d & occupancy_map,
+  FrontierCache & frontier_cache,
+  Fn && fn)
+{
+  const int size_x = occupancy_map.getSizeX();
+  const int size_y = occupancy_map.getSizeY();
+  for (const auto & offset : kCardinalNeighborOffsets) {
     const int x = point->mapX + offset[0];
     const int y = point->mapY + offset[1];
     if (x < 0 || y < 0 || x >= size_x || y >= size_y) {
@@ -703,7 +731,7 @@ FrontierSearchResult get_frontier(
     const auto [reachable_x, reachable_y] = reachable_queue.front();
     reachable_queue.pop_front();
     FrontierPoint * reachable_point = frontier_cache.getPoint(reachable_x, reachable_y);
-    for_each_neighbor(
+    for_each_cardinal_neighbor(
       reachable_point,
       occupancy_map,
       frontier_cache,
@@ -917,39 +945,28 @@ bool is_frontier_point(
     return false;
   }
 
-  // A frontier point must touch free map space and must not be blocked by costmaps.
-  bool blocked_neighbor = false;
-  bool has_free_neighbor = false;
+  // A frontier is usable when at least one adjacent free cell is both
+  // robot-reachable and unblocked. Other neighbors may legitimately belong to
+  // an inflated wall; that must not suppress a valid indoor frontier.
+  bool has_accessible_free_neighbor = false;
   for_each_neighbor(point, occupancy_map, frontier_cache, [&](FrontierPoint * neighbor) {
-    if (blocked_neighbor) {
+    if (has_accessible_free_neighbor) {
       return;
     }
 
     const int map_cost = occupancy_map.getCost(neighbor->mapX, neighbor->mapY);
-
-    if (context->global_cost_blocked(neighbor->mapX, neighbor->mapY)) {
-      // Any blocked adjacent cell disqualifies this frontier candidate.
-      blocked_neighbor = true;
-      return;
-    }
-
     if (
       map_cost == static_cast<int>(OccupancyGrid2d::CostValues::FreeSpace) &&
       (!context->reachable_free_filter_active() ||
-      context->reachable_free_cell(neighbor->mapX, neighbor->mapY)))
+      context->reachable_free_cell(neighbor->mapX, neighbor->mapY)) &&
+      !context->global_cost_blocked(neighbor->mapX, neighbor->mapY))
     {
-      has_free_neighbor = true;
+      has_accessible_free_neighbor = true;
     }
   });
 
-  if (blocked_neighbor) {
-    // Blocked adjacency takes precedence over free-neighbor condition.
-    cache_frontier_eligibility(false);
-    return false;
-  }
-
-  cache_frontier_eligibility(has_free_neighbor);
-  return has_free_neighbor;
+  cache_frontier_eligibility(has_accessible_free_neighbor);
+  return has_accessible_free_neighbor;
 }
 
 std::optional<VisibleRevealGain> compute_visible_reveal_gain(

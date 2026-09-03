@@ -189,6 +189,24 @@ TEST(FrontierSearchTests, GlobalCostmapBlockingEliminatesFrontiers)
   EXPECT_TRUE(result.frontiers.empty());
 }
 
+TEST(FrontierSearchTests, BlockedWallNeighborDoesNotHideAccessibleFrontier)
+{
+  auto map_msg = build_grid(6, 6, -1);
+  set_cells(map_msg, {{2, 3}}, 0);
+  auto costmap_msg = build_grid(6, 6, 0);
+  set_cells(costmap_msg, {{3, 2}}, 100);
+  const OccupancyGrid2d occupancy_map(map_msg);
+  const OccupancyGrid2d costmap(costmap_msg);
+  FrontierCache frontier_cache(6, 6);
+
+  EXPECT_TRUE(is_frontier_point(
+    frontier_cache.getPoint(3, 3),
+    occupancy_map,
+    costmap,
+    std::nullopt,
+    frontier_cache));
+}
+
 TEST(FrontierSearchTests, LocalCostmapBlockingDoesNotEliminateFrontierExtraction)
 {
   std::vector<std::pair<int, int>> free_cells;
@@ -318,6 +336,69 @@ TEST(FrontierSearchTests, DisconnectedFreeIslandIsNotSelected)
     ASSERT_TRUE(frontier.goal_point.has_value());
     EXPECT_LT(frontier.goal_point->first, 5.0);
   }
+}
+
+TEST(FrontierSearchTests, DiagonalCornerDoesNotMakeFrontierReachable)
+{
+  auto map_msg = build_grid(8, 8, -1);
+  set_cells(map_msg, {{2, 2}, {3, 3}, {3, 4}, {4, 3}, {4, 4}}, 0);
+  const OccupancyGrid2d occupancy_map(map_msg);
+  const OccupancyGrid2d costmap(build_grid(8, 8, 0));
+
+  const auto result = get_frontier(make_pose(2.5, 2.5), occupancy_map, costmap);
+
+  ASSERT_FALSE(result.frontiers.empty());
+  for (const auto & frontier : result.frontiers) {
+    ASSERT_TRUE(frontier.goal_point.has_value());
+    EXPECT_LT(frontier.goal_point->first, 3.0);
+    EXPECT_LT(frontier.goal_point->second, 3.0);
+  }
+}
+
+TEST(FrontierSearchTests, TraversableInflationDoesNotDisconnectDispatchGoal)
+{
+  auto core = make_snapshot_core();
+  core->params.occ_threshold = 98;
+  auto map_msg = build_grid(12, 7, 100);
+  std::vector<std::pair<int, int>> free_corridor;
+  for (int x = 1; x <= 10; ++x) {
+    free_corridor.emplace_back(x, 3);
+  }
+  set_cells(map_msg, free_corridor, 0);
+
+  auto costmap_msg = build_grid(12, 7, 0);
+  set_cells(costmap_msg, {{5, 3}}, 65);
+  core->map = OccupancyGrid2d(map_msg);
+  core->costmap = OccupancyGrid2d(costmap_msg);
+  core->local_costmap = OccupancyGrid2d(build_grid(12, 7, 0));
+
+  const auto goal = core->build_dispatch_goal_pose(
+    make_frontier(9.5, 3.5), make_pose(1.5, 3.5), true);
+
+  ASSERT_TRUE(goal.has_value());
+  EXPECT_DOUBLE_EQ(goal->pose.position.x, 9.5);
+  EXPECT_DOUBLE_EQ(goal->pose.position.y, 3.5);
+}
+
+TEST(FrontierSearchTests, LethalCostBarrierDisconnectsDispatchGoal)
+{
+  auto core = make_snapshot_core();
+  core->params.occ_threshold = 98;
+  auto map_msg = build_grid(12, 7, 100);
+  std::vector<std::pair<int, int>> free_corridor;
+  for (int x = 1; x <= 10; ++x) {
+    free_corridor.emplace_back(x, 3);
+  }
+  set_cells(map_msg, free_corridor, 0);
+
+  auto costmap_msg = build_grid(12, 7, 0);
+  set_cells(costmap_msg, {{5, 3}}, 100);
+  core->map = OccupancyGrid2d(map_msg);
+  core->costmap = OccupancyGrid2d(costmap_msg);
+  core->local_costmap = OccupancyGrid2d(build_grid(12, 7, 0));
+
+  EXPECT_FALSE(core->build_dispatch_goal_pose(
+    make_frontier(9.5, 3.5), make_pose(1.5, 3.5), true).has_value());
 }
 
 TEST(FrontierSearchTests, ConcurrentSearchProducesDeterministicEquivalentResults)

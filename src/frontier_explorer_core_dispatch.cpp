@@ -31,6 +31,10 @@ namespace frontier_exploration_ros2
 
 void FrontierExplorerCore::try_send_next_goal()
 {
+  if (awaiting_costmap_after_map_update) {
+    return;
+  }
+
   // Main scheduler entrypoint: exits early unless maps, pose, and lifecycle gates are ready.
   if (!exploration_enabled) {
     return;
@@ -92,9 +96,6 @@ void FrontierExplorerCore::try_send_next_goal()
     if (!all_frontiers_suppressed_reported) {
       callbacks.log_info("All currently detected frontiers are temporarily suppressed");
       all_frontiers_suppressed_reported = true;
-      if (params.completion_event_enabled) {
-        callbacks.on_exploration_complete();
-      }
     }
     handle_all_frontiers_suppressed(*current_pose);
     return;
@@ -117,9 +118,6 @@ void FrontierExplorerCore::try_send_next_goal()
       if (!all_frontiers_suppressed_reported) {
         callbacks.log_info("All currently detected frontiers are temporarily suppressed");
         all_frontiers_suppressed_reported = true;
-        if (params.completion_event_enabled) {
-          callbacks.on_exploration_complete();
-        }
       }
       handle_all_frontiers_suppressed(*current_pose);
       return;
@@ -162,9 +160,6 @@ void FrontierExplorerCore::try_send_next_goal()
       callbacks.log_info(
         "No reachable frontier candidate is available right now; waiting for a map update");
       no_reachable_frontier_reported = true;
-      if (params.completion_event_enabled) {
-        callbacks.on_exploration_complete();
-      }
     }
     return;
   }
@@ -680,6 +675,7 @@ void FrontierExplorerCore::request_frontier_reselection(
   const std::string & reselection_reason,
   const std::string & goal_update_log_prefix)
 {
+  (void)current_pose;
   if (!goal_handle || frontier_sequence.empty()) {
     // Reselection is meaningful only with an active accepted goal and a non-empty replacement.
     return;
@@ -702,9 +698,9 @@ void FrontierExplorerCore::request_frontier_reselection(
   pending_frontier_dispatch_context = "reselected";
   callbacks.log_info(
     goal_update_log_prefix + ": " + reselection_reason);
-  // Use Nav2's native action preemption path by sending the replacement goal directly.
-  // Post-goal settle remains reserved for terminal result paths, not live replacements.
-  dispatch_pending_frontier_goal(current_pose);
+  // Serialize replacement goals so a terminal result from the old Nav2 tree cannot
+  // complete while its controller is accepting the new path.
+  request_active_goal_cancel(reselection_reason);
 }
 
 void FrontierExplorerCore::request_active_goal_cancel(const std::string & reason)
@@ -936,9 +932,6 @@ bool FrontierExplorerCore::send_frontier_goal(
   if (dispatch_index >= frontier_sequence.size() || !goal_pose.has_value()) {
     callbacks.log_info(
       "All selected frontier goals lack a safe dispatch point; waiting for updated costmap or frontier data");
-    if (params.completion_event_enabled) {
-      callbacks.on_exploration_complete();
-    }
     return false;
   }
 
