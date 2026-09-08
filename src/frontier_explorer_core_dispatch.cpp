@@ -136,6 +136,22 @@ void FrontierExplorerCore::try_send_next_goal()
   all_frontiers_suppressed_reported = false;
   suppressed_return_to_start_started = false;
   if (filtered_frontiers.empty()) {
+    // A blocked search seed cannot establish that the environment is exhausted.
+    int cost_x = 0;
+    int cost_y = 0;
+    if (!costmap->worldToMapNoThrow(
+        current_pose->position.x, current_pose->position.y, cost_x, cost_y) ||
+      costmap->getCost(cost_x, cost_y) >= params.occ_threshold)
+    {
+      if (!no_reachable_frontier_reported) {
+        callbacks.log_warn(
+          "Frontier search starts in blocked or unavailable costmap space; "
+          "waiting for a valid search seed, not declaring completion");
+      }
+      no_reachable_frontier_reported = true;
+      no_frontiers_reported = false;
+      return;
+    }
     no_reachable_frontier_reported = false;
     publish_frontier_markers(filtered_frontiers);
 
